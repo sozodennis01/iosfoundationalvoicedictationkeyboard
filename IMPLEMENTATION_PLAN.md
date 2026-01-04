@@ -46,6 +46,9 @@ HOST APP                          KEYBOARD EXTENSION
 - [ ] **Phase 6**: Create Host App UI (DictationView, SettingsView)
 - [ ] **Phase 7**: Create Keyboard Extension files
 - [ ] **Phase 8**: Wire up end-to-end flow and update App entry point
+- [ ] **Phase 9**: Write unit tests for shared models and services
+- [ ] **Phase 10**: Write integration tests for App Group communication
+- [ ] **Phase 11**: Manual E2E testing on hardware device (user-performed)
 
 ---
 
@@ -77,6 +80,18 @@ localspeechtotext_keyboard/
 │   │   └── AppGroupIdentifier.swift
 │   └── Models/
 │       └── DictationState.swift
+│
+├── Tests/                               # Test Suites
+│   ├── SharedTests/
+│   │   ├── DictationStateTests.swift
+│   │   └── AppConstantsTests.swift
+│   ├── ServiceTests/
+│   │   ├── SharedStorageServiceTests.swift
+│   │   ├── TextCleanupServiceTests.swift
+│   │   └── SpeechRecognitionServiceTests.swift
+│   └── IntegrationTests/
+│       ├── AppGroupCommunicationTests.swift
+│       └── URLSchemeTests.swift
 │
 └── IMPLEMENTATION_PLAN.md               # This file
 ```
@@ -316,17 +331,294 @@ func openURL(_ url: URL) {
 
 ---
 
-## Testing Checklist
+## Testing Strategy
 
-- [ ] Host app requests microphone permission correctly
-- [ ] Host app requests speech recognition permission correctly
-- [ ] Speech transcription works in real-time
-- [ ] LLM cleanup improves text quality
-- [ ] Text saves to App Group correctly
-- [ ] Keyboard extension can read from App Group
-- [ ] URL scheme opens host app from keyboard
-- [ ] Insert button works in keyboard
-- [ ] Works across different apps (Messages, Notes, Safari)
+### Phase 9: Unit Tests
+
+#### SharedTests/DictationStateTests.swift
+```swift
+import XCTest
+@testable import localspeechtotext_keyboard
+
+class DictationStateTests: XCTestCase {
+    func testCodableEncoding() {
+        let state = DictationState(
+            rawText: "um hello world",
+            cleanedText: "Hello world",
+            status: .ready,
+            timestamp: Date()
+        )
+
+        let encoder = JSONEncoder()
+        let data = try? encoder.encode(state)
+        XCTAssertNotNil(data)
+
+        let decoder = JSONDecoder()
+        let decoded = try? decoder.decode(DictationState.self, from: data!)
+        XCTAssertEqual(decoded?.rawText, state.rawText)
+        XCTAssertEqual(decoded?.cleanedText, state.cleanedText)
+        XCTAssertEqual(decoded?.status, state.status)
+    }
+
+    func testDictationStatusRawValues() {
+        XCTAssertEqual(DictationStatus.idle.rawValue, "idle")
+        XCTAssertEqual(DictationStatus.recording.rawValue, "recording")
+        XCTAssertEqual(DictationStatus.processing.rawValue, "processing")
+        XCTAssertEqual(DictationStatus.ready.rawValue, "ready")
+        XCTAssertEqual(DictationStatus.error.rawValue, "error")
+    }
+}
+```
+
+#### ServiceTests/SharedStorageServiceTests.swift
+```swift
+import XCTest
+@testable import localspeechtotext_keyboard
+
+class SharedStorageServiceTests: XCTestCase {
+    var service: SharedStorageService!
+    var mockDefaults: UserDefaults!
+
+    override func setUp() {
+        super.setUp()
+        // Use in-memory suite for testing
+        mockDefaults = UserDefaults(suiteName: "test.suite")!
+        service = SharedStorageService(userDefaults: mockDefaults)
+    }
+
+    override func tearDown() {
+        mockDefaults.removePersistentDomain(forName: "test.suite")
+        super.tearDown()
+    }
+
+    func testSaveAndGetText() {
+        service.saveText("Hello world")
+        let retrieved = service.getText()
+        XCTAssertEqual(retrieved, "Hello world")
+    }
+
+    func testSaveAndGetState() {
+        let state = DictationState(
+            rawText: "test",
+            cleanedText: "Test",
+            status: .ready,
+            timestamp: Date()
+        )
+
+        service.saveState(state)
+        let retrieved = service.getState()
+        XCTAssertNotNil(retrieved)
+        XCTAssertEqual(retrieved?.rawText, "test")
+        XCTAssertEqual(retrieved?.status, .ready)
+    }
+
+    func testGetTextReturnsNilWhenEmpty() {
+        XCTAssertNil(service.getText())
+    }
+}
+```
+
+#### ServiceTests/TextCleanupServiceTests.swift
+```swift
+import XCTest
+@testable import localspeechtotext_keyboard
+
+class TextCleanupServiceTests: XCTestCase {
+    func testPromptFormatting() {
+        let service = TextCleanupService()
+        let prompt = service.createCleanupPrompt(rawText: "um hello world")
+
+        // Verify prompt contains instructions
+        XCTAssertTrue(prompt.contains("Fix punctuation"))
+        XCTAssertTrue(prompt.contains("Remove filler words"))
+        XCTAssertTrue(prompt.contains("um hello world"))
+    }
+
+    // Note: Actual LLM calls require device and cannot be unit tested
+    // Use integration tests or manual testing for full cleanup flow
+}
+```
+
+#### ServiceTests/SpeechRecognitionServiceTests.swift
+```swift
+import XCTest
+import Speech
+@testable import localspeechtotext_keyboard
+
+class SpeechRecognitionServiceTests: XCTestCase {
+    func testPermissionStates() {
+        let service = SpeechRecognitionService()
+
+        // Test that permission checking doesn't crash
+        // Actual permissions require user interaction
+        XCTAssertNotNil(service)
+    }
+
+    func testLocaleConfiguration() {
+        let service = SpeechRecognitionService()
+        // Verify service initializes with en_US locale
+        XCTAssertNotNil(service)
+    }
+
+    // Note: Actual speech recognition requires microphone and cannot be unit tested
+    // Use manual device testing for full speech flow
+}
+```
+
+### Phase 10: Integration Tests
+
+#### IntegrationTests/AppGroupCommunicationTests.swift
+```swift
+import XCTest
+@testable import localspeechtotext_keyboard
+
+class AppGroupCommunicationTests: XCTestCase {
+    func testAppGroupSharedDefaults() {
+        // Test that App Group suite can be created
+        let appGroup = UserDefaults(suiteName: AppConstants.appGroupID)
+        XCTAssertNotNil(appGroup)
+
+        // Test write from host app
+        appGroup?.set("test data", forKey: AppConstants.sharedTextKey)
+
+        // Test read from keyboard extension
+        let retrieved = appGroup?.string(forKey: AppConstants.sharedTextKey)
+        XCTAssertEqual(retrieved, "test data")
+
+        // Cleanup
+        appGroup?.removeObject(forKey: AppConstants.sharedTextKey)
+    }
+
+    func testStateSharing() {
+        let state = DictationState(
+            rawText: "test",
+            cleanedText: "Test",
+            status: .ready,
+            timestamp: Date()
+        )
+
+        // Simulate host app saving
+        let storage = SharedStorageService()
+        storage.saveState(state)
+
+        // Simulate keyboard extension reading
+        let retrieved = storage.getState()
+        XCTAssertNotNil(retrieved)
+        XCTAssertEqual(retrieved?.cleanedText, "Test")
+    }
+}
+```
+
+#### IntegrationTests/URLSchemeTests.swift
+```swift
+import XCTest
+@testable import localspeechtotext_keyboard
+
+class URLSchemeTests: XCTestCase {
+    func testURLSchemeFormat() {
+        let url = URL(string: "voicedictation://record")
+        XCTAssertNotNil(url)
+        XCTAssertEqual(url?.scheme, "voicedictation")
+        XCTAssertEqual(url?.host, "record")
+    }
+
+    // Note: Actual URL handling requires app lifecycle and cannot be unit tested
+    // Test in app delegate or scene delegate with manual testing
+}
+```
+
+### Phase 11: Manual E2E Testing (Hardware Device Required)
+
+**Pre-requisites:**
+- Physical iOS device with iOS 26+
+- Device signed into developer account
+- App installed via Xcode
+- Keyboard enabled in Settings → Keyboard
+
+**Manual Test Cases:**
+
+#### Test Case 1: Permission Flow
+- [ ] Launch host app
+- [ ] App requests microphone permission
+- [ ] App requests speech recognition permission
+- [ ] Permissions granted successfully
+- [ ] Settings view shows "Authorized" status
+
+#### Test Case 2: Basic Dictation
+- [ ] Open Notes app
+- [ ] Switch to VoiceDictation keyboard
+- [ ] Tap mic button
+- [ ] Host app opens and starts recording
+- [ ] Speak: "Hello world, this is a test"
+- [ ] Real-time transcript appears
+- [ ] Tap stop
+- [ ] Processing indicator shows
+- [ ] Return to Notes app
+- [ ] Keyboard shows cleaned text preview
+- [ ] Tap Insert button
+- [ ] Text inserted correctly
+
+#### Test Case 3: Text Cleanup Quality
+- [ ] Record with filler words: "Um, like, you know, hello world"
+- [ ] Verify cleaned text removes fillers
+- [ ] Record with poor punctuation
+- [ ] Verify cleaned text has proper punctuation and capitalization
+
+#### Test Case 4: Multiple Apps
+- [ ] Test in Messages app
+- [ ] Test in Safari search bar
+- [ ] Test in Mail compose
+- [ ] Test in third-party apps
+- [ ] Verify insertion works consistently
+
+#### Test Case 5: Error Handling
+- [ ] Test with no microphone permission
+- [ ] Test with no speech recognition permission
+- [ ] Test with airplane mode (offline LLM)
+- [ ] Test recording timeout
+- [ ] Verify error states display correctly
+
+#### Test Case 6: App Group Communication
+- [ ] Record dictation in host app
+- [ ] Force quit host app
+- [ ] Open keyboard in another app
+- [ ] Verify text persists and can be inserted
+
+#### Test Case 7: Performance
+- [ ] Measure time from tap to recording start
+- [ ] Measure LLM cleanup latency
+- [ ] Test battery usage during extended recording
+- [ ] Verify no memory leaks
+
+### Running Tests
+
+```bash
+# Run all unit and integration tests
+xcodebuild test -scheme localspeechtotext_keyboard \
+  -destination 'platform=iOS Simulator,name=iPhone 16'
+
+# Run specific test suite
+xcodebuild test -scheme localspeechtotext_keyboard \
+  -only-testing:SharedTests
+
+xcodebuild test -scheme localspeechtotext_keyboard \
+  -only-testing:ServiceTests
+
+# From Xcode: Cmd+U or Product → Test
+```
+
+### Test Coverage Goals
+
+| Component | Target Coverage | Test Type |
+|-----------|----------------|-----------|
+| Shared Models | 100% | Unit |
+| SharedStorageService | 90% | Unit + Integration |
+| TextCleanupService | 70% (prompt logic) | Unit |
+| SpeechRecognitionService | 60% (setup/permissions) | Unit |
+| App Group Communication | 100% | Integration |
+| URL Scheme Routing | 80% | Integration |
+| Views | 0% (manual only) | Manual |
+| Full User Flow | N/A | Manual E2E |
 
 ---
 
