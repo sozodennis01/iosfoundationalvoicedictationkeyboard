@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh repo create:*)",
+      "Bash(git -C /Users/sozodennis/Developer/localspeechtotext_keyboard log --oneline -20)"
+    ]
+  }
+}
