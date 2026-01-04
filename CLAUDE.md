@@ -30,6 +30,10 @@ localspeechtotext_keyboard/
 │   └── Views/                      # DictationView, SettingsView
 ├── VoiceDictationKeyboard/         # Keyboard Extension
 ├── Shared/                         # Models & Constants (both targets)
+├── Tests/                          # Unit & Integration Tests
+│   ├── SharedTests/                # Tests for shared models
+│   ├── ServiceTests/               # Tests for services
+│   └── IntegrationTests/           # Cross-component tests
 └── IMPLEMENTATION_PLAN.md          # Detailed implementation guide
 ```
 
@@ -84,6 +88,51 @@ textDocumentProxy.insertText("cleaned text here")
 7. Keyboard shows "Insert" button
 8. Text inserted
 
+## Testing Strategy
+
+### Unit Tests (Automated via XCTest)
+Write unit tests for components that don't require hardware:
+
+**Shared Models:**
+- `DictationState`: Codable encoding/decoding
+- `AppConstants`: Validate constants
+
+**Services (with mocking):**
+- `SharedStorageService`: Mock UserDefaults, test save/read operations
+- `TextCleanupService`: Mock LLM responses, test prompt formatting
+- `SpeechRecognitionService`: Test permission states, error handling
+
+### Integration Tests (Automated)
+- App Group communication between targets
+- URL scheme handling and routing
+- State transitions (idle → recording → processing → ready)
+
+### End-to-End Tests (Manual on Hardware Device)
+**Cannot be automated** - requires real device testing:
+- Real microphone input and speech recognition
+- Actual LLM text cleanup quality
+- Keyboard extension in different apps (Messages, Notes, Safari)
+- Full dictation workflow
+- Permission prompts and user interactions
+
+### Test Commands
+```bash
+# Run all unit tests
+xcodebuild test -scheme localspeechtotext_keyboard -destination 'platform=iOS Simulator,name=iPhone 16'
+
+# Run specific test suite
+xcodebuild test -scheme localspeechtotext_keyboard -only-testing:SharedTests
+
+# Run tests from Xcode
+# Cmd+U or Product → Test
+```
+
+### Coverage Goals
+- **Shared models**: 100% (simple data structures)
+- **Services**: 80%+ (business logic, with mocked dependencies)
+- **Views**: Manual testing only (SwiftUI previews + device)
+- **E2E flow**: Manual device testing required
+
 ## Commands
 
 ```bash
@@ -105,3 +154,6 @@ xcodebuild -scheme localspeechtotext_keyboard -destination 'platform=iOS Simulat
 - Keyboard extension requires `RequestsOpenAccess = YES` in Info.plist
 - Test on real device - keyboard extensions don't work well in simulator
 - LLM has cold start latency on first call - show loading indicator
+- Write unit tests for all services and models as you implement them
+- Manual E2E testing must be done by user on physical iOS device
+- Run tests with `Cmd+U` in Xcode or via `xcodebuild test` command
