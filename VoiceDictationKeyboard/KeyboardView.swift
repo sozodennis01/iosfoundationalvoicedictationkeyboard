@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 /// Main SwiftUI keyboard view - basic QWERTY layout
 struct KeyboardView: View {
@@ -37,7 +38,7 @@ struct KeyboardView: View {
                         .font(.system(size: 20))
                         .foregroundColor(isRecording ? .white : .gray)
                         .frame(width: 44, height: 44)
-                        .background(isRecording ? Color.red : Color(.systemGray5))
+                        .background(isRecording ? Color.red : Color(uiColor: .systemGray5))
                         .cornerRadius(8)
                         .scaleEffect(isRecording ? 1.2 : 1.0)
                         .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: isRecording)
@@ -46,7 +47,7 @@ struct KeyboardView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
             }
-            .background(Color(.systemGray6))
+            .background(Color(uiColor: .systemGray6))
 
             // Error message banner
             if let errorMessage = errorMessage {
@@ -102,7 +103,7 @@ struct KeyboardView: View {
                                     .font(.system(size: 16, weight: .semibold))
                                     .foregroundColor(.primary)
                                     .frame(width: 42, height: 42)
-                                    .background(Color(.systemGray5))
+                                    .background(Color(uiColor: .systemGray5))
                                     .cornerRadius(5)
                             }
 
@@ -120,7 +121,7 @@ struct KeyboardView: View {
                                     .font(.system(size: 16, weight: .semibold))
                                     .foregroundColor(.primary)
                                     .frame(width: 42, height: 42)
-                                    .background(Color(.systemGray5))
+                                    .background(Color(uiColor: .systemGray5))
                                     .cornerRadius(5)
                             }
                         }
@@ -135,7 +136,7 @@ struct KeyboardView: View {
                                     .font(.system(size: 14, weight: .medium))
                                     .foregroundColor(.primary)
                                     .frame(maxWidth: .infinity, minHeight: 42)
-                                    .background(Color(.systemGray5))
+                                    .background(Color(uiColor: .systemGray5))
                                     .cornerRadius(5)
                             }
 
@@ -184,7 +185,7 @@ struct KeyboardView: View {
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(.systemGray6))
+                .background(Color(uiColor: .systemGray6))
                 .onTapGesture {
                     handleMicButtonTap()
                 }
@@ -205,10 +206,10 @@ struct KeyboardView: View {
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(.systemGray6))
+                .background(Color(uiColor: .systemGray6))
             }
         }
-        .background(Color(.systemGray6))
+        .background(Color(uiColor: .systemGray6))
     }
 
     private func handleMicButtonTap() {
@@ -238,7 +239,7 @@ struct KeyButton: View {
                 .font(.system(size: 20, weight: .regular))
                 .foregroundColor(.primary)
                 .frame(maxWidth: .infinity, minHeight: 42)
-                .background(Color(.systemBackground))
+                .background(Color(uiColor: .systemBackground))
                 .cornerRadius(5)
                 .shadow(color: .black.opacity(0.1), radius: 1, x: 0, y: 1)
         }
