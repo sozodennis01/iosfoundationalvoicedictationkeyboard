@@ -17,7 +17,13 @@
       "Bash(swift -typecheck:*)",
       "Bash(swiftc:*)",
       "Bash(grep:*)",
-      "Bash(/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc:*)"
+      "Bash(/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc:*)",
+      "Bash(git commit:*)",
+      "Skill(superpowers:using-git-worktrees)",
+      "Bash(git check-ignore:*)",
+      "Bash(git worktree:*)",
+      "Skill(superpowers:writing-plans)",
+      "Skill(superpowers:subagent-driven-development)"
     ]
   }
 }

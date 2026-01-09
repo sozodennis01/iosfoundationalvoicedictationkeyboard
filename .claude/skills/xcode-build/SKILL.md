@@ -1,15 +1,27 @@
 ---
-description: Build iOS/macOS projects with Xcode. Use when the user asks to build, compile, or check for build errors.
+description: Build iOS/macOS projects with Xcode. ONLY use when explicitly requested by the user.
 ---
 
 # Xcode Build
 
+**🛑 CRITICAL: ONLY USE WHEN EXPLICITLY REQUESTED**
+
+**DO NOT use this skill proactively or automatically.** ONLY use when:
+- User explicitly says "build this" or "run xcodebuild"
+- User explicitly calls the xcode-build skill or command
+- User asks you to verify compilation by building
+
+**The user can see compilation errors in their IDE and will build themselves.**
+
+---
+
 **⚠️ IMPORTANT: macOS ONLY - Local Execution Required**
 
 This skill ONLY works on the user's local macOS laptop.
-- ✅ **DO** use this skill for local, interactive builds
+- ✅ **DO** use this skill for local, interactive builds when user requests
 - ❌ **DO NOT** run this in background tasks (they use Linux environments without Xcode)
 - ❌ **DO NOT** delegate this to agents that might run in background/remote environments
+- ❌ **DO NOT** use proactively to "verify" or "check" compilation
 
 If you're uncertain about the execution environment, ask the user first.
 

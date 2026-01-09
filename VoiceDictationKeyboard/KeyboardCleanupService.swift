@@ -10,7 +10,8 @@ import FoundationModels
 
 @available(iOS 26.0, *)
 @MainActor
-class KeyboardCleanupService: ObservableObject {
+class KeyboardCleanupService {
+    
     enum CleanupError: LocalizedError {
         case modelUnavailable
         case cleanupFailed
