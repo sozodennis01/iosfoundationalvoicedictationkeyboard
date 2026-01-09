@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Combine
 import Speech
 import AVFoundation
 
@@ -59,9 +60,6 @@ class KeyboardSpeechService: ObservableObject {
         // Create analyzer
         analyzer = SpeechAnalyzer(modules: [transcriber])
 
-        // Get best audio format
-        let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber])
-
         // Create input stream
         let (inputSequence, builder) = AsyncStream<AnalyzerInput>.makeStream()
         self.inputBuilder = builder
@@ -75,10 +73,7 @@ class KeyboardSpeechService: ObservableObject {
         Task {
             do {
                 for try await result in transcriber.results {
-                    let text = String(result.text.characters)
-                    await MainActor.run {
-                        self.currentTranscript = text
-                    }
+                    self.currentTranscript = String(result.text.characters)
                 }
             } catch {
                 print("Transcription error: \(error)")
@@ -86,15 +81,16 @@ class KeyboardSpeechService: ObservableObject {
         }
 
         // Set up audio engine
-        audioEngine = AVAudioEngine()
-        let inputNode = audioEngine!.inputNode
+        let engine = AVAudioEngine()
+        audioEngine = engine
+        let inputNode = engine.inputNode
         let recordingFormat = inputNode.outputFormat(forBus: 0)
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
             self?.inputBuilder?.yield(AnalyzerInput(buffer: buffer))
         }
 
-        try audioEngine!.start()
+        try engine.start()
     }
 
     func stopRecording() -> String {
