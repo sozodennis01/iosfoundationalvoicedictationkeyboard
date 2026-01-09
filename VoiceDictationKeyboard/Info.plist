@@ -13,12 +13,16 @@
 			<key>PrimaryLanguage</key>
 			<string>en-US</string>
 			<key>RequestsOpenAccess</key>
-			<false/>
+			<true/>
 		</dict>
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.keyboard-service</string>
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).KeyboardViewController</string>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Voice dictation requires microphone access to transcribe your speech.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Voice dictation uses speech recognition to convert your speech to text.</string>
 </dict>
 </plist>
