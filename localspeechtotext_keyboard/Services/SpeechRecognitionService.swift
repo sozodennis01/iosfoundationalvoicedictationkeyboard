@@ -5,13 +5,9 @@ import Combine
 
 @available(iOS 26.0, *)
 class SpeechRecognitionService: ObservableObject {
-    private var transcriber: SpeechTranscriber?
-    private var analyzer: SpeechAnalyzer?
     private var audioEngine: AVAudioEngine?
-    private var transcriptionTask: Task<Void, Never>?
-    private var analyzerTask: Task<Void, Error>?
-    private var inputContinuation: AsyncStream<AnalyzerInput>.Continuation?
-    private var analyzerFormat: AVAudioFormat?
+    private var audioFile: AVAudioFile?
+    private var recordingURL: URL?
 
     @Published var isRecording = false
     @Published var hasPermission = false
@@ -19,6 +15,15 @@ class SpeechRecognitionService: ObservableObject {
 
     init() {
         checkPermissions()
+        setupAudioEngine()
+    }
+
+    // MARK: - Audio Engine Management
+
+    private func setupAudioEngine() {
+        guard audioEngine == nil else { return }
+        audioEngine = AVAudioEngine()
+        // Note: Don't prepare the engine here - prepare only when starting recording
     }
 
     // MARK: - Permission Management
@@ -45,9 +50,9 @@ class SpeechRecognitionService: ObservableObject {
         await AVAudioApplication.requestRecordPermission()
     }
 
-    // MARK: - Transcription
+    // MARK: - Recording (Phase 1) - Records audio to file
 
-    func startTranscription() async throws -> AsyncStream<String> {
+    func startRecording() async throws {
         guard hasPermission else {
             throw SpeechRecognitionError.permissionDenied
         }
@@ -56,33 +61,19 @@ class SpeechRecognitionService: ObservableObject {
         let audioSession = AVAudioSession.sharedInstance()
         try audioSession.setCategory(
             .playAndRecord,
-            mode: .default,
-            options: [.mixWithOthers, .defaultToSpeaker]
+            mode: .measurement,
+            options: [.defaultToSpeaker, .allowBluetoothHFP, .mixWithOthers]
         )
         try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
 
-        // Create transcriber with default locale for volatile (real-time) results
-        let newTranscriber = SpeechTranscriber(
-            locale: Locale.current,
-            transcriptionOptions: [],
-            reportingOptions: [.volatileResults],
-            attributeOptions: []
-        )
-        transcriber = newTranscriber
+        // Create temporary file for audio recording
+        let tempDir = FileManager.default.temporaryDirectory
+        recordingURL = tempDir.appendingPathComponent("recording_temp_\(UUID().uuidString).caf")
 
-        // Create analyzer with transcriber module
-        let newAnalyzer = SpeechAnalyzer(modules: [newTranscriber])
-        analyzer = newAnalyzer
-
-        // Get the best audio format for the analyzer
-        analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [newTranscriber])
-
-        // Create async stream for feeding audio to analyzer
-        let (inputSequence, inputBuilder) = AsyncStream<AnalyzerInput>.makeStream()
-        inputContinuation = inputBuilder
-
-        // Set up audio engine for microphone input
-        audioEngine = AVAudioEngine()
+        // Set up audio engine (don't prepare yet)
+        if audioEngine == nil {
+            audioEngine = AVAudioEngine()
+        }
         guard let audioEngine = audioEngine else {
             throw SpeechRecognitionError.audioEngineError
         }
@@ -95,115 +86,120 @@ class SpeechRecognitionService: ObservableObject {
             currentTranscript = ""
         }
 
-        // Start the analyzer with the input sequence
-        analyzerTask = Task {
-            try await newAnalyzer.start(inputSequence: inputSequence)
-        }
-
-        return AsyncStream { continuation in
-            // Start consuming transcription results
-            self.transcriptionTask = Task {
-                do {
-                    for try await result in newTranscriber.results {
-                        let text = String(result.text.characters)
-                        await MainActor.run {
-                            self.currentTranscript += text
-                        }
-                        continuation.yield(text)
-                    }
-                } catch {
-                    // Handle transcription error
-                }
-                continuation.finish()
-            }
-
-            // Install tap to capture audio and feed to analyzer
-            inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, time in
-                guard let self = self else { return }
-                self.processAudioBuffer(buffer)
-            }
-
-            // Start audio engine
-            do {
-                try audioEngine.start()
-            } catch {
-                continuation.finish()
-            }
-
-            continuation.onTermination = { @Sendable _ in
-                Task { @MainActor in
-                    self.stopTranscription()
-                }
-            }
-        }
-    }
-
-    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        guard let inputContinuation = inputContinuation else { return }
-
-        // Convert buffer to analyzer format if needed
-        if let analyzerFormat = analyzerFormat,
-           let convertedBuffer = convertBuffer(buffer, to: analyzerFormat) {
-            inputContinuation.yield(AnalyzerInput(buffer: convertedBuffer))
-        } else {
-            // Use original buffer if conversion not needed or fails
-            inputContinuation.yield(AnalyzerInput(buffer: buffer))
-        }
-    }
-
-    private func convertBuffer(_ buffer: AVAudioPCMBuffer, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
-        guard buffer.format != format else {
-            return buffer
-        }
-
-        guard let converter = AVAudioConverter(from: buffer.format, to: format) else {
-            return nil
-        }
-
-        let frameCapacity = AVAudioFrameCount(
-            Double(buffer.frameLength) * format.sampleRate / buffer.format.sampleRate
+        // Create audio file for writing
+        audioFile = try AVAudioFile(
+            forWriting: recordingURL!,
+            settings: recordingFormat.settings,
+            commonFormat: recordingFormat.commonFormat,
+            interleaved: false
         )
 
-        guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCapacity) else {
-            return nil
+        // Install tap to write audio to file (not to analyzer)
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, time in
+            guard let self = self else { return }
+            self.writeAudioBufferToFile(buffer)
         }
 
-        var error: NSError?
-        let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
-            outStatus.pointee = .haveData
-            return buffer
-        }
+        // Prepare the engine after installing the tap
+        audioEngine.prepare()
 
-        converter.convert(to: convertedBuffer, error: &error, withInputFrom: inputBlock)
-
-        if error != nil {
-            return nil
-        }
-
-        return convertedBuffer
+        // Start audio engine
+        try audioEngine.start()
     }
 
-    func stopTranscription() {
-        // Finish the input stream
-        inputContinuation?.finish()
-        inputContinuation = nil
+    private func writeAudioBufferToFile(_ buffer: AVAudioPCMBuffer) {
+        do {
+            try audioFile?.write(from: buffer)
+        } catch {
+            print("Error writing audio buffer to file: \(error)")
+        }
+    }
 
-        // Stop audio engine
+    // MARK: - Transcription (Phase 2) - Transcribes recorded file
+
+    func stopRecordingAndTranscribe() async throws -> String {
+        guard let recordingURL = recordingURL else {
+            throw SpeechRecognitionError.recognitionFailed
+        }
+
+        // Stop audio engine and close file
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        try? audioFile?.close()
+        audioEngine?.stop()
+        audioEngine?.prepare() // Keep prepared for next recording
+
+        guard FileManager.default.fileExists(atPath: recordingURL.path) else {
+            throw SpeechRecognitionError.recognitionFailed
+        }
+
+        let transcriber = SpeechTranscriber(
+            locale: Locale.current,
+            transcriptionOptions: [],
+            reportingOptions: [], // No volatile results needed for file transcription
+            attributeOptions: []
+        )
+
+        let analyzer = SpeechAnalyzer(modules: [transcriber])
+
+        await MainActor.run {
+            isRecording = false
+        }
+
+        // Transcribe the recorded file
+        var transcriptParts: [String] = []
+
+        do {
+            // Create AVAudioFile from the recorded URL for analysis
+            let audioFile = try AVAudioFile(forReading: recordingURL)
+            // Use the file-based transcription pattern from the quickstart guide
+            if let lastSample = try await analyzer.analyzeSequence(from: audioFile) {
+                try await analyzer.finalizeAndFinish(through: lastSample)
+            } else {
+                await analyzer.cancelAndFinishNow()
+            }
+
+            // Collect all transcription results
+            for try await result in transcriber.results {
+                let text = String(result.text.characters)
+                transcriptParts.append(text)
+            }
+        } catch {
+            // If file analysis fails, try canceling properly
+            await analyzer.cancelAndFinishNow()
+            throw SpeechRecognitionError.recognitionFailed
+        }
+
+        // Clean up temporary file
+        try? FileManager.default.removeItem(at: recordingURL)
+
+        let finalTranscript = transcriptParts.joined()
+        await MainActor.run {
+            currentTranscript = finalTranscript
+        }
+
+        // Deactivate audio session
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+
+        return finalTranscript
+    }
+
+    // MARK: - Cancel recording without transcription
+
+    func cancelRecording() {
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
-        audioEngine = nil
+        audioEngine?.prepare()
 
-        // Cancel tasks
-        analyzerTask?.cancel()
-        analyzerTask = nil
-        transcriptionTask?.cancel()
-        transcriptionTask = nil
+        // Clean up temporary file if it exists
+        if let recordingURL = recordingURL {
+            try? FileManager.default.removeItem(at: recordingURL)
+        }
 
-        transcriber = nil
-        analyzer = nil
-        analyzerFormat = nil
+        audioFile = nil
+        recordingURL = nil
         isRecording = false
-        
+        currentTranscript = ""
+
         // Deactivate audio session
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }

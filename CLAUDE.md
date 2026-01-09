@@ -10,17 +10,61 @@ iOS keyboard extension with on-device voice dictation using Apple's native APIs.
 - **Text Cleanup**: `FoundationModels` (Apple's on-device LLM)
 - **No external dependencies** - Apple frameworks only
 
-## Architecture
+## Architecture: Keyboard-Based Dictation Pattern
+
 ```
-Host App (mic + processing) → App Group → Keyboard Extension (insert text)
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     KEYBOARD-BASED DICTATION FLOW                       │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  ┌─────────────────┐     Darwin Notifications      ┌─────────────────┐ │
+│  │    KEYBOARD     │ ─────────────────────────────►│  CONTAINER APP  │ │
+│  │   EXTENSION     │◄───────────────────────────── │  (Background)   │ │
+│  │                 │                               │                 │ │
+│  │  • Mic button   │   startRecording ────────►   │  • Audio Engine │ │
+│  │  • ✗/✓ buttons  │   stopRecording ─────────►   │  • STT Service  │ │
+│  │  • Status UI    │   cancelRecording ───────►   │  • LLM Cleanup  │ │
+│  │  • Text insert  │                               │  • Live Activity│ │
+│  │                 │   ◄──────── recordingStarted  │                 │ │
+│  │                 │   ◄──────── textReady         │                 │ │
+│  └─────────────────┘                               └─────────────────┘ │
+│          │                                                  │          │
+│          └──────────────► App Group ◄───────────────────────┘          │
+│                        (cleaned text)                                   │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Host App**: Captures audio, runs speech recognition, cleans up text via LLM
-- **Keyboard Extension**: Minimal UI with mic button, reads cleaned text from App Group, inserts into any app
-- **Communication**: App Group shared storage (`group.sozodennis.voicedictation`)
+### Two Modes of Operation
+
+| Mode | When | Behavior |
+|------|------|----------|
+| **Cold Start** | Container app never opened | Keyboard opens URI → Container initializes → Returns to keyboard → Recording starts |
+| **Warm Start** | Container already initialized | Keyboard sends Darwin notification directly → Container (in background) starts recording |
+
+### Component Responsibilities
+
+- **Container App**:
+  - Initializes audio engine + permissions on first launch
+  - Runs in background via `UIBackgroundModes: audio`
+  - Listens for Darwin notifications from keyboard
+  - Performs all audio capture, STT, and LLM cleanup
+  - Posts results to App Group + Darwin notification
+
+- **Keyboard Extension**:
+  - Checks `SharedState.isHostAppReady()` on mic tap
+  - If cold: opens `voicedictation://` URI
+  - If warm: sends `startRecording` Darwin notification directly
+  - Shows ✗/✓ control buttons during recording
+  - Auto-inserts cleaned text when `textReady` received
+
+- **Communication**:
+  - **Darwin Notifications**: Real-time commands (keyboard→app) and events (app→keyboard)
+  - **App Group UserDefaults**: Persisted state + cleaned text storage
 
 ## Key Constraint
-iOS keyboard extensions **cannot access the microphone**. The keyboard opens the host app to record, then returns cleaned text via App Group. This is the same pattern used by Wispr Flow.
+iOS keyboard extensions **cannot access the microphone directly**. However, once the container app initializes the audio engine with `UIBackgroundModes: audio`, the container continues running in background. The keyboard then commands the background container via Darwin notifications—no need to open the app again.
+
+**This is the KeyboardKit `.keyboard` pattern**: Initialize once, then keyboard controls background recording.
 
 ## Key Files Reference
 
@@ -31,12 +75,6 @@ iOS keyboard extensions **cannot access the microphone**. The keyboard opens the
 | `Services/SharedStorageService.swift` | App Group read/write |
 | `VoiceDictationKeyboard/KeyboardViewController.swift` | Keyboard extension controller |
 | `Shared/Constants/AppGroupIdentifier.swift` | Shared constants |
-
-## Bundle Identifiers
-- **Host App**: `sozodennis.localspeechtotext-keyboard`
-- **Keyboard**: `sozodennis.localspeechtotext-keyboard.keyboard`
-- **App Group**: `group.sozodennis.voicedictation`
-- **URL Scheme**: `voicedictation://`
 
 ## Key APIs
 
@@ -192,15 +230,33 @@ guard hasPermission else { return }
 - FoundationModels: https://developer.apple.com/documentation/FoundationModels
 - WWDC25 SpeechAnalyzer: https://developer.apple.com/videos/play/wwdc2025/277/
 
-## User Flow
+## User Flow (Keyboard Mode)
+
+### Cold Start (First Use)
 1. User taps mic in keyboard
-2. Opens host app via URL scheme
-3. Records speech → real-time transcript
-4. LLM cleans up text
-5. Saves to App Group
-6. User returns to original app
-7. Keyboard shows "Insert" button
-8. Text inserted
+2. `SharedState.isHostAppReady() == false`
+3. Keyboard opens `voicedictation://` URI
+4. Container app initializes: permissions, audio engine, Darwin observers
+5. Container sets `SharedState.setHostAppReady(true)` via App Group
+6. User returns to original app → keyboard shows ✗/✓ buttons
+7. Recording controlled via Darwin notifications
+
+### Warm Start (Subsequent Uses)
+1. User taps mic in keyboard
+2. `SharedState.isHostAppReady() == true` (read from App Group shared store)
+3. Keyboard shows ✗/✓ buttons immediately
+4. Keyboard posts `startRecording` Darwin notification
+5. Container (running in background) starts recording
+6. User speaks → real-time STT in container
+7. User taps ✓ → keyboard posts `stopRecording`
+8. Container: LLM cleanup → saves to App Group → posts `textReady`
+9. Keyboard auto-inserts text via `textDocumentProxy.insertText()`
+
+### Shared Store (App Group UserDefaults)
+- `hostAppReady`: Bool - container initialized
+- `cleanedText`: String - final text for insertion
+- `rawTranscript`: String - pre-cleanup text
+- `status`: String - current recording state
 
 ## Commands
 
@@ -209,73 +265,9 @@ guard hasPermission else { return }
 xcodebuild -scheme localspeechtotext_keyboard -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
-## Wispr Flow Implementation (✅ IMPLEMENTED)
+## Background Audio Configuration
 
-### Architecture Overview
-
-**🎯 Core Pattern:** Background audio recording with Live Activities + Darwin Notifications
-
-The implementation follows the Wispr Flow pattern with these key components:
-
-#### 1. **Background Audio Session** ✅
-```swift
-// In SpeechRecognitionService.swift
-let audioSession = AVAudioSession.sharedInstance()
-try audioSession.setCategory(
-    .playAndRecord,
-    mode: .default,
-    options: [.mixWithOthers, .defaultToSpeaker]
-)
-try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-```
-
-#### 2. **Live Activities (Dynamic Island)** ✅
-```swift
-// In LiveActivityService.swift
-let activity = try Activity.request(
-    attributes: RecordingActivityAttributes(name: "Voice Dictation"),
-    content: .init(state: initialState, staleDate: nil)
-)
-// Updates status in Dynamic Island: "Listening..." → "Processing..." → "Complete"
-```
-
-#### 3. **Darwin Notifications (Cross-Process IPC)** ✅
-```swift
-// Host App posts notification when text is ready
-DarwinNotificationCenter.post(.textReady)
-
-// Keyboard Extension observes and auto-inserts text
-darwinObserver = DarwinNotificationCenter.observe(.textReady) {
-    self?.handleTextReadyNotification()
-}
-```
-
-### Complete Flow (Wispr Flow Pattern)
-1. User taps mic in keyboard → URL scheme opens host app
-2. Host app configures background audio session → starts recording
-3. **Live Activity started** → Dynamic Island shows "Listening..." with duration counter
-4. User continues using any app while keyboard stays visible
-5. User taps mic again to stop → recording stops
-6. **Live Activity updates** → "Processing..." in Dynamic Island
-7. Speech recognition → LLM text cleanup → save to App Group
-8. **Darwin notification posted** → keyboard extension receives instantly
-9. **Text auto-inserted** via `textDocumentProxy.insertText()`
-10. **Live Activity ended** → Dynamic Island dismisses
-
-### Key Files
-
-| File | Purpose |
-|------|---------|
-| `Shared/Models/RecordingActivityAttributes.swift` | Live Activity model definition |
-| `localspeechtotext_keyboard/Services/LiveActivityService.swift` | Manages Live Activities lifecycle |
-| `Shared/Services/DarwinNotificationCenter.swift` | Cross-process notification wrapper |
-| `localspeechtotext_keyboard/Services/SpeechRecognitionService.swift` | Background audio + speech recognition |
-| `localspeechtotext_keyboard/Views/DictationView.swift` | Coordinates recording, cleanup, Live Activities |
-| `VoiceDictationKeyboard/KeyboardState.swift` | Handles Darwin notifications + auto-insert |
-
-### Configuration Files
-
-**localspeechtotext-keyboard-Info.plist:**
+**Container App Info.plist:**
 ```xml
 <key>UIBackgroundModes</key>
 <array>
@@ -285,107 +277,30 @@ darwinObserver = DarwinNotificationCenter.observe(.textReady) {
 <true/>
 ```
 
-### Why This Implementation Works
-- ✅ **Background audio** allows recording while app is backgrounded
-- ✅ **Live Activities** provide non-intrusive Dynamic Island status
-- ✅ **Darwin Notifications** enable instant cross-process communication (no polling!)
-- ✅ **Auto-insert** eliminates manual paste button tap
-- ✅ **App Group** maintains data persistence between processes
-- ✅ **URL scheme** triggers recording from keyboard extension
-
-3. **Darwin Notifications** - Add real-time signaling between processes
+This enables the container app to:
+- Continue recording when backgrounded
+- Keep audio engine alive for keyboard commands
+- Show Live Activities in Dynamic Island
 
 ---
 
-## State Machines & Darwin Notification Protocol
-
-### 🔄 **Keyboard Extension State Machine**
-```
-                    ┌─────────────────────────────────────┐
-                    │                                     │
-                    ▼                                     │
-┌─────────┐   mic pressed   ┌────────────┐  recordingStarted  ┌───────────┐
-│  IDLE   │ ─────────────►  │ PROCESSING │ ────────────────►  │ RECORDING │
-└─────────┘                 └────────────┘                    └───────────┘
-     ▲                           │                                │   │
-     │                           │                                │   │
-     │                           │ textReady                      │   │
-     │                           │ notification                   │   │ x pressed
-     │    ┌────────────┐        │                                │   │ (cancel)
-     │◄───│ AUTO-INSERT│◄───────┘                                │   │
-     │    └────────────┘                                         │   │
-     │                                                           │   │
-     │                      ┌────────────┐  ✓ pressed            │   │
-     │                      │ PROCESSING │◄──────────────────────┘   │
-     │                      │ (cleanup)  │                           │
-     │                      └────────────┘                           │
-     │                           │                                   │
-     │                           │ textReady                         │
-     │◄──────────────────────────┘                                   │
-     │                                                               │
-     └───────────────────────────────────────────────────────────────┘
-```
-
-### 🔄 **Host App State Machine**
-```
-┌─────────┐  startRecording OR URL    ┌───────────┐  stopRecording  ┌────────────┐
-│  IDLE   │ ─────────────────────►    │ RECORDING │ ─────────────►  │ PROCESSING │
-└─────────┘                           └───────────┘                 └────────────┘
-     ▲                                   │                              │
-     │                                   │ cancelRecording              │
-     │◄──────────────────────────────────┘                              │
-     │                                                                  │
-     │                          textReady notification                  │
-     │◄─────────────────────────────────────────────────────────────────┘
-```
-
-### 📨 **Darwin Notification Protocol**
+## Darwin Notification Protocol
 
 | Notification | Direction | Purpose |
-|-------------|-----------|---------|
-| `hostAppReady` | Host → Keyboard | Host app is initialized and ready |
-| `startRecording` | Keyboard → Host | Command to start recording |
-| `recordingStarted` | Host → Keyboard | Confirms recording has begun |
-| `stopRecording` | Keyboard → Host | User pressed ✓, process audio |
-| `cancelRecording` | Keyboard → Host | User pressed ✗, discard audio |
-| `textReady` | Host → Keyboard | Cleaned text is ready, auto-insert |
+|--------------|-----------|---------|
+| `startRecording` | Keyboard → Container | Start recording |
+| `stopRecording` | Keyboard → Container | Stop + process audio |
+| `cancelRecording` | Keyboard → Container | Discard recording |
+| `recordingStarted` | Container → Keyboard | Confirm recording began |
+| `textReady` | Container → Keyboard | Text ready, auto-insert |
 
-### 🎯 **Complete User Flow (WisprFlow Pattern)**
+---
 
-1. **User opens host app once** → Host calls `SharedState.setHostAppReady(true)` → Persists state + Darwin notify
+## Bundle Identifiers
 
-2. **Keyboard activates via viewWillAppear:**
-   - Checks `SharedState.isHostAppReady()` from App Group
-   - Sets up Darwin notification observer for state changes
-
-3. **User taps mic in keyboard:**
-   - `SharedState.isHostAppReady() == false` → Open URL scheme → Host app opens → Calls `SharedState.setHostAppReady(true)` → Darwin notifies keyboard → Shows x/✓ buttons + posts `startRecording`
-   - `SharedState.isHostAppReady() == true` → Shows x/✓ buttons immediately + posts `startRecording` (no URL open needed!)
-
-4. **Keyboard shows ✗ and ✓ buttons** (status = `.recording`)
-   - Host app receives `startRecording` → Starts recording → Posts `recordingStarted`
-   - Host app shows Live Activities while recording in background
-
-5. **User presses ✗ (cancel):**
-   - Post `cancelRecording` → Host discards audio → Returns to idle
-
-6. **User presses ✓ (confirm):**
-   - Post `stopRecording` → Host processes audio → STT → LLM cleanup → Saves to App Group → Posts `textReady`
-
-7. **Keyboard receives `textReady`:**
-   - Auto-reads from App Group → `textDocumentProxy.insertText()` → Returns to idle
-
-### 🏗️ **Architecture Decisions**
-
-- **Production-ready WisprFlow pattern:** Clean App Group UserDefaults + Darwin Notifications
-- **Immediate keyboard updates:** Darwin notifications ensure running keyboards update instantly when state changes
-- **True cross-process state sync:** No polling, instant notification delivery
-- **Backwards compatible:** Works with segmented memory model (keyboard extension ≠ host app)
-- **Persisted state:** Survives device reboots, keyboard restarts, app terminations
-- **Live Activities:** Provide non-intrusive Dynamic Island status while recording continues in background
-- **Auto-insertion:** Eliminates manual paste - text appears instantly in any iOS text field
-
-## URI URL
-bundle identifiers keyboard: sozodennis.localspeechtotext-keyboard.VoiceDictationKeyboard
-bundle identifier host app: sozodennis.localspeechtotext-keyboard
-app group: group.sozodennis.voicedictation
+| Component | Identifier |
+|-----------|------------|
+| Container App | `sozodennis.localspeechtotext-keyboard` |
+| Keyboard Extension | `sozodennis.localspeechtotext-keyboard.VoiceDictationKeyboard` |
+| App Group | `group.sozodennis.voicedictation` |
+| URL Scheme | `voicedictation://` |

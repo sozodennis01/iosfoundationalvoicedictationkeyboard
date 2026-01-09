@@ -255,12 +255,8 @@ struct DictationView: View {
                 // Post Darwin notification to keyboard extension
                 DarwinNotificationCenter.shared.post(name: AppConstants.recordingStartedNotification)
 
-                // Start transcription
-                let transcriptStream = try await speechService.startTranscription()
-
-                for await transcript in transcriptStream {
-                    currentTranscript = transcript
-                }
+                // Start recording to file (no real-time transcription)
+                try await speechService.startRecording()
             } catch {
                 errorMessage = error.localizedDescription
                 isRecording = false
@@ -270,16 +266,30 @@ struct DictationView: View {
     }
 
     private func stopRecording() {
-        isRecording = false
-        speechService.stopTranscription()
-
-        // Update Live Activity status
         Task {
-            await liveActivityService.updateStatus("Processing...", isRecording: false)
-        }
+            do {
+                isProcessing = true
 
-        // Process the transcript
-        processTranscript()
+                // Update Live Activity status
+                await liveActivityService.updateStatus("Processing...", isRecording: false)
+
+                // Stop recording and get the complete transcript
+                let transcript = try await speechService.stopRecordingAndTranscribe()
+
+                await MainActor.run {
+                    isRecording = false
+                    currentTranscript = transcript
+                }
+
+                // Process the transcript
+                await processTranscript()
+            } catch {
+                errorMessage = error.localizedDescription
+                isRecording = false
+                await liveActivityService.endActivity()
+                isProcessing = false
+            }
+        }
     }
 
     private func processTranscript() {
@@ -329,7 +339,7 @@ struct DictationView: View {
 
     private func cancelRecording() {
         isRecording = false
-        speechService.stopTranscription()
+        speechService.cancelRecording()
         currentTranscript = ""
         cleanedText = ""
 
