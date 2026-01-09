@@ -4,6 +4,17 @@ description: Run Xcode tests for iOS/macOS projects. Use when the user asks to r
 
 # Xcode Testing
 
+**⚠️ IMPORTANT: macOS ONLY - Local Execution Required**
+
+This skill ONLY works on the user's local macOS laptop.
+- ✅ **DO** use this skill for local, interactive test runs
+- ❌ **DO NOT** run this in background tasks (they use Linux environments without Xcode)
+- ❌ **DO NOT** delegate this to agents that might run in background/remote environments
+
+If you're uncertain about the execution environment, ask the user first.
+
+---
+
 Run tests using `xcodebuild test` command-line tool.
 
 ## Basic Test Command

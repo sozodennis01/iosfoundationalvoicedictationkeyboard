@@ -4,6 +4,17 @@ description: Build iOS/macOS projects with Xcode. Use when the user asks to buil
 
 # Xcode Build
 
+**⚠️ IMPORTANT: macOS ONLY - Local Execution Required**
+
+This skill ONLY works on the user's local macOS laptop.
+- ✅ **DO** use this skill for local, interactive builds
+- ❌ **DO NOT** run this in background tasks (they use Linux environments without Xcode)
+- ❌ **DO NOT** delegate this to agents that might run in background/remote environments
+
+If you're uncertain about the execution environment, ask the user first.
+
+---
+
 Build projects using `xcodebuild` command-line tool.
 
 ## Basic Build Command

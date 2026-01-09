@@ -1,152 +1,95 @@
+//
+//  KeyboardView.swift
+//  VoiceDictationKeyboard
+//
+//  Created by Dennis Sarsozo on 1/8/26.
+//
+
 import SwiftUI
+import KeyboardKit
 
+/// Main SwiftUI keyboard view that uses KeyboardKit's SystemKeyboard
 struct KeyboardView: View {
-    let onMicTap: () -> Void
-    let onInsertTap: () -> Void
-    let getText: () -> String
-    let getStatus: () -> DictationStatus
+    let textDocumentProxy: UITextDocumentProxy
 
-    @State private var currentText: String = ""
-    @State private var currentStatus: DictationStatus = .idle
-    @State private var timer: Timer?
+    @StateObject private var keyboardContext = KeyboardContext()
+    @StateObject private var autocompleteContext = AutocompleteContext()
+    @StateObject private var calloutContext = KeyboardCalloutContext()
+    @StateObject private var state = KeyboardState()
 
     var body: some View {
-        VStack(spacing: 12) {
-            // Status indicator
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 8, height: 8)
-
-                Text(statusText)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                Spacer()
-            }
-            .padding(.horizontal)
-            .padding(.top, 8)
-
-            // Text preview
-            if !currentText.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    Text(currentText)
-                        .font(.body)
-                        .lineLimit(2)
-                        .padding(.horizontal)
+        ZStack {
+            VStack(spacing: 0) {
+                // Placeholder toolbar with autocomplete area and mic button
+                HStack {
+                    Text("Autocomplete") // Placeholder for future autocomplete view
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 8)
+                    Spacer()
+                    MicButton(action: state.startDictation)
+                        .padding(.trailing, 8)
                 }
-                .frame(height: 60)
+                .frame(height: 40)
                 .background(Color(.systemGray6))
-                .cornerRadius(8)
-                .padding(.horizontal)
+
+                // KeyboardKit's system keyboard with standard QWERTY layout
+                SystemKeyboard(
+                    state: keyboardContext,
+                    services: KeyboardServices(),
+                    buttonContent: { $0.view },
+                    buttonView: { $0.view },
+                    emojiKeyboard: { $0.view },
+                    toolbar: { EmptyView() }
+                )
             }
 
-            // Button row
-            HStack(spacing: 20) {
-                // Microphone button
-                Button(action: onMicTap) {
-                    VStack(spacing: 4) {
-                        Image(systemName: "mic.fill")
-                            .font(.system(size: 28))
-                            .foregroundColor(.white)
-                            .frame(width: 60, height: 60)
-                            .background(Circle().fill(Color.blue))
-
-                        Text("Record")
-                            .font(.caption)
-                            .foregroundColor(.primary)
-                    }
-                }
-
-                // Insert button
-                if currentStatus == .ready && !currentText.isEmpty {
-                    Button(action: onInsertTap) {
-                        VStack(spacing: 4) {
-                            Image(systemName: "text.insert")
-                                .font(.system(size: 28))
-                                .foregroundColor(.white)
-                                .frame(width: 60, height: 60)
-                                .background(Circle().fill(Color.green))
-
-                            Text("Insert")
-                                .font(.caption)
-                                .foregroundColor(.primary)
-                        }
-                    }
-                }
+            // Dictation overlay
+            if state.showDictationOverlay {
+                DictationStateView(
+                    state: mapToDictationStateViewState(state.dictationState),
+                    onStop: state.stopDictation
+                )
             }
-            .padding(.bottom, 12)
-
-            Spacer()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemBackground))
         .onAppear {
-            startPolling()
-        }
-        .onDisappear {
-            stopPolling()
+            state.configure(textDocumentProxy: textDocumentProxy)
         }
     }
 
-    // MARK: - Status
-
-    private var statusColor: Color {
-        switch currentStatus {
+    // Map KeyboardState.DictationUIState to DictationStateView.State
+    private func mapToDictationStateViewState(_ uiState: KeyboardState.DictationUIState) -> DictationStateView.State {
+        switch uiState {
         case .idle:
-            return .gray
-        case .recording:
-            return .red
+            return .idle
+        case .arming:
+            return .arming
+        case .listening:
+            return .listening
         case .processing:
-            return .orange
-        case .ready:
-            return .green
-        case .error:
-            return .red
+            return .processing
+        case .error(let message):
+            return .error(message)
         }
-    }
-
-    private var statusText: String {
-        switch currentStatus {
-        case .idle:
-            return "Tap mic to record"
-        case .recording:
-            return "Recording in app..."
-        case .processing:
-            return "Processing..."
-        case .ready:
-            return "Ready to insert"
-        case .error:
-            return "Error occurred"
-        }
-    }
-
-    // MARK: - Polling
-
-    private func startPolling() {
-        // Poll for updates every 0.5 seconds
-        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
-            updateState()
-        }
-    }
-
-    private func stopPolling() {
-        timer?.invalidate()
-        timer = nil
-    }
-
-    private func updateState() {
-        currentText = getText()
-        currentStatus = getStatus()
     }
 }
 
 #Preview {
-    KeyboardView(
-        onMicTap: {},
-        onInsertTap: {},
-        getText: { "Sample dictated text" },
-        getStatus: { .ready }
-    )
-    .frame(height: 280)
+    // SwiftUI preview for development
+    KeyboardView(textDocumentProxy: PreviewTextDocumentProxy())
+}
+
+/// Preview-only mock for UITextDocumentProxy
+private class PreviewTextDocumentProxy: NSObject, UITextDocumentProxy {
+    var documentContextBeforeInput: String? = ""
+    var documentContextAfterInput: String? = ""
+    var selectedText: String? = nil
+    var documentInputMode: UITextInputMode? = nil
+    var documentIdentifier: UUID = UUID()
+
+    func adjustTextPosition(byCharacterOffset offset: Int) {}
+    func setMarkedText(_ markedText: String, selectedRange: NSRange) {}
+    func unmarkText() {}
+    func insertText(_ text: String) {}
+    func deleteBackward() {}
 }

@@ -10,6 +10,7 @@ import SwiftUI
 @main
 @available(iOS 26.0, *)
 struct localspeechtotext_keyboardApp: App {
+    @StateObject private var backgroundService = BackgroundDictationService()
     @State private var shouldAutoStartRecording = false
 
     var body: some Scene {
@@ -19,10 +20,17 @@ struct localspeechtotext_keyboardApp: App {
                     handleURL(url)
                 }
                 .onAppear {
+                    // Start background monitoring when app appears
+                    backgroundService.startMonitoring()
+
                     if shouldAutoStartRecording {
                         // The DictationView will handle auto-start
                         shouldAutoStartRecording = false
                     }
+                }
+                .onDisappear {
+                    // Stop monitoring when app disappears
+                    backgroundService.stopMonitoring()
                 }
         }
     }

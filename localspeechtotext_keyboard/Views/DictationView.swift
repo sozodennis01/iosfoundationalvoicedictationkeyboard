@@ -186,7 +186,11 @@ struct DictationView: View {
         Task {
             do {
                 // Request permissions if needed
-                guard speechService.hasPermission || await speechService.requestPermissions() else {
+                var hasPermission = speechService.hasPermission
+                if !hasPermission {
+                    hasPermission = await speechService.requestPermissions()
+                }
+                guard hasPermission else {
                     errorMessage = "Speech recognition permission is required"
                     return
                 }

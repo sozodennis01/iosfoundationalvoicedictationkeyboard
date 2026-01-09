@@ -128,9 +128,8 @@ struct SettingsView: View {
     }
 
     private func requestSpeechRecognitionPermission() {
-        Task {
-            let status = await SFSpeechRecognizer.requestAuthorization()
-            await MainActor.run {
+        SFSpeechRecognizer.requestAuthorization { status in
+            Task { @MainActor in
                 speechRecognitionStatus = status
             }
         }

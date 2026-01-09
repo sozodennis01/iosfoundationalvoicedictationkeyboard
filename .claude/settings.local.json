@@ -4,7 +4,20 @@
       "Bash(gh repo create:*)",
       "Bash(git -C /Users/sozodennis/Developer/localspeechtotext_keyboard log --oneline -20)",
       "Bash(git checkout:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(xcodebuild:*)",
+      "Bash(find:*)",
+      "Skill(superpowers:systematic-debugging)",
+      "Skill(xcode-build)",
+      "Bash(xcrun simctl:*)",
+      "WebSearch",
+      "Skill(superpowers:brainstorming)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd QWERTY keyboard layout design document\n\nDetailed design for keyboard extension with KeyboardKit integration:\n- Full QWERTY layout with autocomplete and persistent mic button\n- App Group communication protocol for keyboard-host coordination\n- Background audio recording with UIBackgroundModes\n- State machine for dictation flow \\(arm → listen → process → insert\\)\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Skill(superpowers:dispatching-parallel-agents)",
+      "Bash(swift -typecheck:*)",
+      "Bash(swiftc:*)",
+      "Bash(grep:*)",
+      "Bash(/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc:*)"
     ]
   }
 }

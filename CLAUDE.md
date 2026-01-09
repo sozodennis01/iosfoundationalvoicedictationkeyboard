@@ -40,7 +40,12 @@ localspeechtotext_keyboard/
 ## Implementation Status
 See `IMPLEMENTATION_PLAN.md` for full plan and checklist.
 
-**Current Phase**: Project setup - structure and files need to be created.
+**Current Phase**: Core services implemented and building successfully.
+
+✅ `SpeechRecognitionService.swift` - Live mic transcription with SpeechAnalyzer
+✅ `TextCleanupService.swift` - LLM cleanup with availability checking
+✅ `SharedStorageService.swift` - App Group communication
+✅ Views (DictationView, SettingsView, ContentView) - Basic UI implemented
 
 ## Key Files Reference
 
@@ -60,23 +65,157 @@ See `IMPLEMENTATION_PLAN.md` for full plan and checklist.
 
 ## Key APIs
 
-### Speech Recognition
-```swift
-import Speech
-let transcriber = SpeechTranscriber(locale: Locale(identifier: "en_US"))
-```
-
-### Text Cleanup
-```swift
-import FoundationModels
-let session = LanguageModelSession()
-let response = try await session.respond(to: prompt)
-```
-
 ### Keyboard Text Insertion
 ```swift
 textDocumentProxy.insertText("cleaned text here")
 ```
+
+---
+
+## iOS 26 API Guide (IMPORTANT FOR FUTURE AGENTS)
+
+These APIs are new in iOS 26 and documentation is limited. This guide captures working patterns.
+
+### SpeechAnalyzer + SpeechTranscriber (Live Microphone)
+
+**⚠️ Common Mistakes to Avoid:**
+- `SFSpeechRecognizer.authorizationStatus(preset:)` - DOES NOT EXIST
+- `SFSpeechRecognizer.requestAuthorization(preset:)` - DOES NOT EXIST
+- `analyzer.analyze(buffer)` / `analyzer.append(buffer)` / `analyzer.process(buffer)` - NONE OF THESE EXIST
+
+**✅ Correct Pattern for Live Mic Transcription:**
+
+```swift
+import Speech
+import AVFoundation
+
+// 1. Create transcriber with default locale
+let transcriber = SpeechTranscriber(
+    locale: Locale.current,  // Use default locale, not hardcoded
+    transcriptionOptions: [],
+    reportingOptions: [.volatileResults],  // For real-time updates
+    attributeOptions: []
+)
+
+// 2. Create analyzer with transcriber module
+let analyzer = SpeechAnalyzer(modules: [transcriber])
+
+// 3. Get best audio format for the analyzer
+let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber])
+
+// 4. Create AsyncStream for feeding audio (THIS IS THE KEY!)
+let (inputSequence, inputBuilder) = AsyncStream<AnalyzerInput>.makeStream()
+
+// 5. Start analyzer with input sequence
+Task {
+    try await analyzer.start(inputSequence: inputSequence)
+}
+
+// 6. Consume results (throws - must use try)
+Task {
+    do {
+        for try await result in transcriber.results {
+            let text = String(result.text.characters)  // result.text is AttributedString
+            // Use text...
+        }
+    } catch {
+        // Handle error
+    }
+}
+
+// 7. Feed audio buffers via the continuation
+func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
+    inputBuilder.yield(AnalyzerInput(buffer: buffer))
+}
+
+// 8. Stop by finishing the stream
+inputBuilder.finish()
+```
+
+**✅ Correct Permission Handling:**
+
+```swift
+// Check permission (no parameters!)
+let status = SFSpeechRecognizer.authorizationStatus()
+
+// Request permission (callback-based, wrap in async)
+func requestPermissions() async -> Bool {
+    await withCheckedContinuation { continuation in
+        SFSpeechRecognizer.requestAuthorization { status in
+            continuation.resume(returning: status == .authorized)
+        }
+    }
+}
+
+// Microphone permission
+let micGranted = await AVAudioApplication.requestRecordPermission()
+```
+
+### FoundationModels (Apple Intelligence LLM)
+
+**✅ Always Check Availability First:**
+
+```swift
+import FoundationModels
+
+let model = SystemLanguageModel.default
+switch model.availability {
+case .available:
+    // Safe to use
+case .unavailable(.deviceNotEligible):
+    // Device doesn't support Apple Intelligence
+case .unavailable(.appleIntelligenceNotEnabled):
+    // User needs to enable in Settings
+case .unavailable(.modelNotReady):
+    // Model still loading, retry later
+case .unavailable:
+    // Other unavailable state
+@unknown default:
+    // Handle future cases
+}
+```
+
+**✅ Basic Text Generation:**
+
+```swift
+let session = LanguageModelSession()
+let response = try await session.respond(to: "Your prompt here")
+let text = response.content  // This is a String
+```
+
+**✅ With Instructions:**
+
+```swift
+let instructions = """
+You are a text cleanup assistant.
+Fix punctuation and remove filler words.
+Output only the cleaned text.
+"""
+let session = LanguageModelSession(instructions: instructions)
+let response = try await session.respond(to: rawText)
+```
+
+### Swift Concurrency Gotchas
+
+**❌ Don't use `||` with async in autoclosure:**
+```swift
+// This will NOT compile:
+guard hasPermission || await requestPermissions() else { return }
+```
+
+**✅ Do this instead:**
+```swift
+var hasPermission = self.hasPermission
+if !hasPermission {
+    hasPermission = await requestPermissions()
+}
+guard hasPermission else { return }
+```
+
+### Reference Documentation
+- SpeechAnalyzer: https://developer.apple.com/documentation/speech/speechanalyzer
+- FoundationModels: https://developer.apple.com/documentation/FoundationModels
+- WWDC25 SpeechAnalyzer: https://developer.apple.com/videos/play/wwdc2025/277/
 
 ## User Flow
 1. User taps mic in keyboard
@@ -150,6 +289,7 @@ xcodebuild -scheme localspeechtotext_keyboard -destination 'platform=iOS Simulat
 4. Add microphone + speech recognition usage descriptions to Info.plist
 
 ## Notes for Future Sessions
+- **READ THE iOS 26 API GUIDE ABOVE** - These APIs are new and easy to get wrong
 - Always check `IMPLEMENTATION_PLAN.md` for current progress
 - Keyboard extension requires `RequestsOpenAccess = YES` in Info.plist
 - Test on real device - keyboard extensions don't work well in simulator
@@ -157,3 +297,5 @@ xcodebuild -scheme localspeechtotext_keyboard -destination 'platform=iOS Simulat
 - Write unit tests for all services and models as you implement them
 - Manual E2E testing must be done by user on physical iOS device
 - Run tests with `Cmd+U` in Xcode or via `xcodebuild test` command
+- When searching for iOS 26 API docs, include "WWDC25" or "2025" in search queries
+- The SpeechAnalyzer uses AsyncStream pattern - don't guess method names like `analyze()` or `process()`
