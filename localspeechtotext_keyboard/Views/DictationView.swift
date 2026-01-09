@@ -16,6 +16,9 @@ struct DictationView: View {
     @State private var isProcessing = false
     @State private var showSuccess = false
     @State private var errorMessage: String?
+    @State private var startRecordingObserver: DarwinNotificationObservation?
+    @State private var stopRecordingObserver: DarwinNotificationObservation?
+    @State private var cancelRecordingObserver: DarwinNotificationObservation?
 
     var body: some View {
         VStack(spacing: 30) {
@@ -50,6 +53,43 @@ struct DictationView: View {
                 // Auto-start recording when triggered from keyboard
                 startRecording()
                 shouldAutoStart = false  // Reset flag
+            }
+        }
+        .onAppear {
+            setupNotificationObservers()
+
+            // Mark host app as ready for keyboard extensions (WisprFlow pattern)
+            SharedState.setHostAppReady(true)
+        }
+    }
+
+    private func setupNotificationObservers() {
+        // Listen for start recording command from keyboard
+        startRecordingObserver = DarwinNotificationCenter.shared.addObserver(name: AppConstants.startRecordingNotification) {
+            Task { @MainActor in
+                if !isRecording && !isProcessing {
+                    startRecording()
+                } else {
+                    print("Host app received startRecording command but already recording/processing")
+                }
+            }
+        }
+
+        // Listen for stop recording command from keyboard
+        stopRecordingObserver = DarwinNotificationCenter.shared.addObserver(name: AppConstants.stopRecordingNotification) {
+            Task { @MainActor in
+                if isRecording {
+                    stopRecording()
+                }
+            }
+        }
+
+        // Listen for cancel recording command from keyboard
+        cancelRecordingObserver = DarwinNotificationCenter.shared.addObserver(name: AppConstants.cancelRecordingNotification) {
+            Task { @MainActor in
+                if isRecording {
+                    cancelRecording()
+                }
             }
         }
     }
@@ -212,6 +252,9 @@ struct DictationView: View {
                 // Start Live Activity for Dynamic Island
                 try await liveActivityService.startActivity()
 
+                // Post Darwin notification to keyboard extension
+                DarwinNotificationCenter.shared.post(name: AppConstants.recordingStartedNotification)
+
                 // Start transcription
                 let transcriptStream = try await speechService.startTranscription()
 
@@ -281,6 +324,18 @@ struct DictationView: View {
             }
 
             isProcessing = false
+        }
+    }
+
+    private func cancelRecording() {
+        isRecording = false
+        speechService.stopTranscription()
+        currentTranscript = ""
+        cleanedText = ""
+
+        // End Live Activity
+        Task {
+            await liveActivityService.endActivity()
         }
     }
 }

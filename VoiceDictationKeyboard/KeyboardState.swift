@@ -24,6 +24,9 @@ class KeyboardDictationService: ObservableObject {
     var fullAccessErrorHandler: ((String) -> Void)? = nil
     var textDocumentProxy: UITextDocumentProxy?
     private var darwinObserver: DarwinNotificationObservation?
+    private var recordingStartedObserver: DarwinNotificationObservation?
+    private var lastCommandTimestamp: Date?
+    private var commandTimeout: Double = 3.0  // 3 seconds timeout
 
     var hasPermissions: Bool {
         SFSpeechRecognizer.authorizationStatus() == .authorized &&
@@ -42,22 +45,32 @@ class KeyboardDictationService: ObservableObject {
     }
 
     init() {
-        // Set up Darwin notification observer for text ready notifications
+        // Set up Darwin notification observers
         setupDarwinNotificationObserver()
+        setupRecordingStartedObserver()
     }
 
     deinit {
-        // Darwin notification observer will be automatically cleaned up
-        // when the DarwinNotificationObservation object is deallocated
+        // Darwin notification observers are automatically cleaned up
+        // when the DarwinNotificationObservation objects are deallocated
     }
 
     private func setupDarwinNotificationObserver() {
-        darwinObserver = DarwinNotificationCenter.shared.addObserver(name: "group.sozodennis.voicedictation.textReady") { [weak self] in
+        darwinObserver = DarwinNotificationCenter.shared.addObserver(name: AppConstants.textReadyNotification) { [weak self] in
             Task { @MainActor in
                 self?.handleTextReadyNotification()
             }
         }
         logger.info("Darwin notification observer set up for textReady")
+    }
+
+    private func setupRecordingStartedObserver() {
+        recordingStartedObserver = DarwinNotificationCenter.shared.addObserver(name: AppConstants.recordingStartedNotification) { [weak self] in
+            Task { @MainActor in
+                self?.handleRecordingStartedNotification()
+            }
+        }
+        logger.info("Darwin notification observer set up for recordingStarted")
     }
 
     private func handleTextReadyNotification() {
@@ -79,6 +92,12 @@ class KeyboardDictationService: ObservableObject {
             lastError = "No text available"
             status = .error
         }
+    }
+
+    private func handleRecordingStartedNotification() {
+        logger.info("Received recordingStarted notification from host app - switching to recording mode")
+        status = .recording
+        lastError = nil
     }
 
     func requestPermissions() async -> Bool {
@@ -104,10 +123,18 @@ class KeyboardDictationService: ObservableObject {
     }
 
     func toggleRecording() async {
-        logger.info("toggleRecording invoked — status: \(self.status.rawValue)")
+        logger.info("toggleRecording invoked — status: \(self.status.rawValue), hostAppReady: \(SharedState.isHostAppReady())")
         switch status {
         case .idle:
-            await triggerHost()
+            if SharedState.isHostAppReady() {
+                // Host app is already initialized - show x/check buttons immediately and post start recording command
+                logger.info("Host app ready - showing recording controls and posting start recording command directly")
+                status = .recording  // Show x/check buttons immediately
+                DarwinNotificationCenter.shared.post(name: AppConstants.startRecordingNotification)
+            } else {
+                // Host app never opened - open it first
+                await triggerHost()
+            }
         case .recording, .processing:
             logger.debug("toggleRecording ignored for status: \(self.status.rawValue)")
         default:
@@ -163,5 +190,104 @@ class KeyboardDictationService: ObservableObject {
 
         // Status will be updated when Darwin notification is received
         // See handleTextReadyNotification() for auto-insert logic
+    }
+
+    // MARK: - Recording Control Methods
+
+    func confirmRecording() {
+        logger.info("User confirmed recording - checking host app readiness")
+
+        // Check if we need to ensure host app is ready
+        if !SharedState.isHostAppReady() {
+            logger.info("Host app not ready - will open host app first")
+            status = .processing
+            ensureHostAppReady { [weak self] success in
+                guard let self = self else { return }
+                if success {
+                    self.logger.info("Host app ready - posting stopRecording notification")
+                    DarwinNotificationCenter.shared.post(name: AppConstants.stopRecordingNotification)
+                    self.status = .processing  // Wait for processing to complete and text to arrive
+                }
+            }
+        } else {
+            // Host app is already ready, post command directly
+            logger.info("Host app ready - posting stopRecording notification")
+            DarwinNotificationCenter.shared.post(name: AppConstants.stopRecordingNotification)
+            status = .processing  // Wait for processing to complete and text to arrive
+        }
+    }
+
+    func cancelRecording() {
+        logger.info("User cancelled recording - checking host app readiness")
+
+        // For cancel, we want to ensure it always reaches the host app
+        if !SharedState.isHostAppReady() {
+            logger.info("Host app not ready - will open host app first for cancel")
+            ensureHostAppReady { [weak self] success in
+                guard let self = self else { return }
+                if success {
+                    self.logger.info("Host app ready - posting cancelRecording notification")
+                    DarwinNotificationCenter.shared.post(name: AppConstants.cancelRecordingNotification)
+                    self.status = .idle  // Return to idle state
+                    self.lastError = nil
+                }
+            }
+        } else {
+            // Host app is already ready, post command directly
+            logger.info("Host app ready - posting cancelRecording notification")
+            DarwinNotificationCenter.shared.post(name: AppConstants.cancelRecordingNotification)
+            status = .idle  // Return to idle state
+            lastError = nil
+        }
+    }
+
+    private func ensureHostAppReady(completion: @escaping (Bool) -> Void) {
+        // If host app is already ready, call completion immediately
+        if SharedState.isHostAppReady() {
+            completion(true)
+            return
+        }
+
+        // Open host app via URL scheme to ensure it's ready
+        guard let url = appOpenURL else {
+            logger.error("Failed to create URL for host app")
+            completion(false)
+            return
+        }
+
+        logger.info("Attempting to open/ensure host app is ready")
+
+        // Set a timeout to avoid waiting indefinitely
+        DispatchQueue.main.asyncAfter(deadline: .now() + commandTimeout) { [weak self] in
+            if !SharedState.isHostAppReady() {
+                self?.logger.warning("Timeout waiting for host app to become ready")
+                // Still proceed if timeout - URL opening will handle fallback
+            }
+        }
+
+        // Open URL - this will bring host app to foreground and make it post ready notification
+        urlOpener?(url, { [weak self] success in
+            guard let self = self else { return }
+            if !success {
+                self.logger.error("Failed to open host app for command")
+                completion(false)
+                return
+            }
+
+            // Wait for host app to post ready notification
+            if SharedState.isHostAppReady() {
+                completion(true)
+            } else {
+                // Set up a one-time observer to wait for ready notification
+                // Using underscore prefix to suppress "never read" warning for lifecycle management
+                var _tempObserver: DarwinNotificationObservation?
+                _tempObserver = DarwinNotificationCenter.shared.addObserver(name: AppConstants.hostAppReadyNotification) { [weak self] in
+                    // Invalidate the temporary observer once triggered by setting to nil
+                    _tempObserver = nil
+                    self?.logger.info("Host app signaled ready via notification")
+                    completion(true)
+                }
+            }
+        })
     }
 }

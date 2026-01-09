@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Foundation
 
 @main
 @available(iOS 26.0, *)
@@ -28,6 +29,9 @@ struct localspeechtotext_keyboardApp: App {
         guard url.scheme == "voicedictation", url.host == "start" else {
             return
         }
+
+        // Mark host app as ready for keyboard extensions
+        SharedState.setHostAppReady(true)
 
         // Trigger auto-start in DictationView
         shouldAutoStart = true

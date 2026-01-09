@@ -293,7 +293,97 @@ darwinObserver = DarwinNotificationCenter.observe(.textReady) {
 - ✅ **App Group** maintains data persistence between processes
 - ✅ **URL scheme** triggers recording from keyboard extension
 
+3. **Darwin Notifications** - Add real-time signaling between processes
+
 ---
+
+## State Machines & Darwin Notification Protocol
+
+### 🔄 **Keyboard Extension State Machine**
+```
+                    ┌─────────────────────────────────────┐
+                    │                                     │
+                    ▼                                     │
+┌─────────┐   mic pressed   ┌────────────┐  recordingStarted  ┌───────────┐
+│  IDLE   │ ─────────────►  │ PROCESSING │ ────────────────►  │ RECORDING │
+└─────────┘                 └────────────┘                    └───────────┘
+     ▲                           │                                │   │
+     │                           │                                │   │
+     │                           │ textReady                      │   │
+     │                           │ notification                   │   │ x pressed
+     │    ┌────────────┐        │                                │   │ (cancel)
+     │◄───│ AUTO-INSERT│◄───────┘                                │   │
+     │    └────────────┘                                         │   │
+     │                                                           │   │
+     │                      ┌────────────┐  ✓ pressed            │   │
+     │                      │ PROCESSING │◄──────────────────────┘   │
+     │                      │ (cleanup)  │                           │
+     │                      └────────────┘                           │
+     │                           │                                   │
+     │                           │ textReady                         │
+     │◄──────────────────────────┘                                   │
+     │                                                               │
+     └───────────────────────────────────────────────────────────────┘
+```
+
+### 🔄 **Host App State Machine**
+```
+┌─────────┐  startRecording OR URL    ┌───────────┐  stopRecording  ┌────────────┐
+│  IDLE   │ ─────────────────────►    │ RECORDING │ ─────────────►  │ PROCESSING │
+└─────────┘                           └───────────┘                 └────────────┘
+     ▲                                   │                              │
+     │                                   │ cancelRecording              │
+     │◄──────────────────────────────────┘                              │
+     │                                                                  │
+     │                          textReady notification                  │
+     │◄─────────────────────────────────────────────────────────────────┘
+```
+
+### 📨 **Darwin Notification Protocol**
+
+| Notification | Direction | Purpose |
+|-------------|-----------|---------|
+| `hostAppReady` | Host → Keyboard | Host app is initialized and ready |
+| `startRecording` | Keyboard → Host | Command to start recording |
+| `recordingStarted` | Host → Keyboard | Confirms recording has begun |
+| `stopRecording` | Keyboard → Host | User pressed ✓, process audio |
+| `cancelRecording` | Keyboard → Host | User pressed ✗, discard audio |
+| `textReady` | Host → Keyboard | Cleaned text is ready, auto-insert |
+
+### 🎯 **Complete User Flow (WisprFlow Pattern)**
+
+1. **User opens host app once** → Host calls `SharedState.setHostAppReady(true)` → Persists state + Darwin notify
+
+2. **Keyboard activates via viewWillAppear:**
+   - Checks `SharedState.isHostAppReady()` from App Group
+   - Sets up Darwin notification observer for state changes
+
+3. **User taps mic in keyboard:**
+   - `SharedState.isHostAppReady() == false` → Open URL scheme → Host app opens → Calls `SharedState.setHostAppReady(true)` → Darwin notifies keyboard → Shows x/✓ buttons + posts `startRecording`
+   - `SharedState.isHostAppReady() == true` → Shows x/✓ buttons immediately + posts `startRecording` (no URL open needed!)
+
+4. **Keyboard shows ✗ and ✓ buttons** (status = `.recording`)
+   - Host app receives `startRecording` → Starts recording → Posts `recordingStarted`
+   - Host app shows Live Activities while recording in background
+
+5. **User presses ✗ (cancel):**
+   - Post `cancelRecording` → Host discards audio → Returns to idle
+
+6. **User presses ✓ (confirm):**
+   - Post `stopRecording` → Host processes audio → STT → LLM cleanup → Saves to App Group → Posts `textReady`
+
+7. **Keyboard receives `textReady`:**
+   - Auto-reads from App Group → `textDocumentProxy.insertText()` → Returns to idle
+
+### 🏗️ **Architecture Decisions**
+
+- **Production-ready WisprFlow pattern:** Clean App Group UserDefaults + Darwin Notifications
+- **Immediate keyboard updates:** Darwin notifications ensure running keyboards update instantly when state changes
+- **True cross-process state sync:** No polling, instant notification delivery
+- **Backwards compatible:** Works with segmented memory model (keyboard extension ≠ host app)
+- **Persisted state:** Survives device reboots, keyboard restarts, app terminations
+- **Live Activities:** Provide non-intrusive Dynamic Island status while recording continues in background
+- **Auto-insertion:** Eliminates manual paste - text appears instantly in any iOS text field
 
 ## URI URL
 bundle identifiers keyboard: sozodennis.localspeechtotext-keyboard.VoiceDictationKeyboard

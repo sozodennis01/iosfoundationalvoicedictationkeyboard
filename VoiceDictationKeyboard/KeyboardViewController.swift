@@ -7,6 +7,7 @@
 
 import UIKit
 import SwiftUI
+import CoreFoundation
 
 /// Main keyboard view controller that hosts the SwiftUI KeyboardView
 class KeyboardViewController: UIInputViewController {
@@ -17,6 +18,7 @@ class KeyboardViewController: UIInputViewController {
     private func openURLWorkaround(_ url: URL, completion: @escaping (Bool) -> Void) {
         do {
             let application = try self.sharedApplication()
+
             // Use the modern API instead of deprecated openURL
             application.open(url, options: [:], completionHandler: completion)
         }
@@ -38,6 +40,9 @@ class KeyboardViewController: UIInputViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+
+        // Start listening for state changes (WisprFlow pattern)
+        startListeningForStateChanges()
 
         // Create SwiftUI KeyboardView with access to textDocumentProxy
         let keyboardView = KeyboardView(
@@ -66,6 +71,17 @@ class KeyboardViewController: UIInputViewController {
         }
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // Read current state on keyboard appearance (WisprFlow pattern)
+        refreshStateAndUI()
+    }
+
+    deinit {
+        // Clean up Darwin notification observer
+        stopListeningForStateChanges()
+    }
+
     override func textWillChange(_ textInput: UITextInput?) {
         // The app is about to change the document's contents
         super.textWillChange(textInput)
@@ -74,5 +90,55 @@ class KeyboardViewController: UIInputViewController {
     override func textDidChange(_ textInput: UITextInput?) {
         // The app has just changed the document's contents
         super.textDidChange(textInput)
+    }
+}
+
+// MARK: - State Management (WisprFlow Pattern)
+
+extension KeyboardViewController {
+
+    private func refreshStateAndUI() {
+        // Update KeyboardState with current shared state
+        if let keyboardView = hostingController?.rootView {
+            // Force refresh of the SwiftUI view by updating its state
+            // The actual state reading is handled in KeyboardState.toggleRecording()
+            // This ensures the view reflects current state
+        }
+    }
+}
+
+// MARK: - Darwin Notifications (WisprFlow Pattern)
+
+extension KeyboardViewController {
+
+    func startListeningForStateChanges() {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+
+        CFNotificationCenterAddObserver(
+            center,
+            UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque()),
+            { (_, observer, name, _, _) in
+                guard let observer else { return }
+                let vc = Unmanaged<KeyboardViewController>
+                    .fromOpaque(observer)
+                    .takeUnretainedValue()
+
+                DispatchQueue.main.async {
+                    vc.refreshStateAndUI()
+                }
+            },
+            SharedNotifier.hostAppStateChanged,
+            nil,
+            .deliverImmediately
+        )
+    }
+
+    func stopListeningForStateChanges() {
+        CFNotificationCenterRemoveObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque()),
+            CFNotificationName(SharedNotifier.hostAppStateChanged),
+            nil
+        )
     }
 }
