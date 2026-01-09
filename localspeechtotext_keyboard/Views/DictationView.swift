@@ -3,6 +3,8 @@ import Speech
 
 @available(iOS 26.0, *)
 struct DictationView: View {
+    @Binding var shouldAutoStart: Bool
+
     @StateObject private var speechService = SpeechRecognitionService()
     @StateObject private var cleanupService = TextCleanupService()
     @State private var storageService = SharedStorageService()
@@ -40,6 +42,13 @@ struct DictationView: View {
         .overlay {
             if showSuccess {
                 successOverlay
+            }
+        }
+        .onChange(of: shouldAutoStart) { _, newValue in
+            if newValue && !isRecording && !isProcessing {
+                // Auto-start recording when triggered from keyboard
+                startRecording()
+                shouldAutoStart = false  // Reset flag
             }
         }
     }
@@ -258,5 +267,5 @@ struct DictationView: View {
 
 @available(iOS 26.0, *)
 #Preview {
-    DictationView()
+    DictationView(shouldAutoStart: .constant(false))
 }

@@ -17,7 +17,14 @@ class KeyboardViewController: UIInputViewController {
         super.viewDidLoad()
 
         // Create SwiftUI KeyboardView with access to textDocumentProxy
-        let keyboardView = KeyboardView(textDocumentProxy: self.textDocumentProxy)
+        let keyboardView = KeyboardView(
+            textDocumentProxy: self.textDocumentProxy,
+            openURLHandler: { [weak self] url in
+                guard let self = self else { return }
+                // Use openURL from the extension context to remain extension-safe
+                self.extensionContext?.open(url, completionHandler: nil)
+            }
+        )
         hostingController = UIHostingController(rootView: keyboardView)
 
         // Add hosting controller as child and set up constraints
@@ -47,3 +54,4 @@ class KeyboardViewController: UIInputViewController {
         super.textDidChange(textInput)
     }
 }
+

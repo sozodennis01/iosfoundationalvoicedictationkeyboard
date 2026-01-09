@@ -1,8 +1,12 @@
 import Foundation
+import Combine
 import UIKit
 
 @MainActor
 class KeyboardState: ObservableObject {
+    /// Handler provided by the hosting controller to open URLs from an extension-safe context
+    var openURLHandler: ((URL) -> Void)?
+
     @Published var dictationState: DictationUIState = .idle
     @Published var showDictationOverlay: Bool = false
 
@@ -19,8 +23,9 @@ class KeyboardState: ObservableObject {
         case error(String)                // Error message
     }
 
-    func configure(textDocumentProxy: UITextDocumentProxy) {
+    func configure(textDocumentProxy: UITextDocumentProxy, openURLHandler: ((URL) -> Void)? = nil) {
         self.textDocumentProxy = textDocumentProxy
+        self.openURLHandler = openURLHandler
     }
 
     func startDictation() {
@@ -36,16 +41,9 @@ class KeyboardState: ObservableObject {
 
         storage.saveCurrentSession(session)
 
-        // Open host app
+        // Open host app via handler provided by the hosting controller (extension-safe)
         if let url = URL(string: "voicedictation://start") {
-            var responder: UIResponder? = UIApplication.shared
-            while let currentResponder = responder {
-                if let application = currentResponder as? UIApplication {
-                    application.open(url, options: [:], completionHandler: nil)
-                    break
-                }
-                responder = currentResponder.next
-            }
+            openURLHandler?(url)
         }
 
         // Update UI
@@ -93,7 +91,7 @@ class KeyboardState: ObservableObject {
 
             // Auto-send start recording command
             var recordingSession = session
-            recordingSession.command = .startRecording
+            recordingSession.command = DictationCommand.startRecording
             storage.saveCurrentSession(recordingSession)
 
         case .processing:
@@ -131,9 +129,5 @@ class KeyboardState: ObservableObject {
 
         // Clear App Group data
         storage.clearCurrentSession()
-    }
-
-    deinit {
-        stopPolling()
     }
 }

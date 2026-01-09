@@ -10,27 +10,13 @@ import SwiftUI
 @main
 @available(iOS 26.0, *)
 struct localspeechtotext_keyboardApp: App {
-    @StateObject private var backgroundService = BackgroundDictationService()
-    @State private var shouldAutoStartRecording = false
+    @State private var shouldAutoStart = false
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(shouldAutoStart: $shouldAutoStart)
                 .onOpenURL { url in
                     handleURL(url)
-                }
-                .onAppear {
-                    // Start background monitoring when app appears
-                    backgroundService.startMonitoring()
-
-                    if shouldAutoStartRecording {
-                        // The DictationView will handle auto-start
-                        shouldAutoStartRecording = false
-                    }
-                }
-                .onDisappear {
-                    // Stop monitoring when app disappears
-                    backgroundService.stopMonitoring()
                 }
         }
     }
@@ -38,14 +24,12 @@ struct localspeechtotext_keyboardApp: App {
     // MARK: - URL Handling
 
     private func handleURL(_ url: URL) {
-        // Handle voicedictation://record URL scheme
-        guard url.scheme == "voicedictation" else {
+        // Handle voicedictation://start URL scheme from keyboard
+        guard url.scheme == "voicedictation", url.host == "start" else {
             return
         }
 
-        if url.host == "record" {
-            // Set flag to auto-start recording
-            shouldAutoStartRecording = true
-        }
+        // Trigger auto-start in DictationView
+        shouldAutoStart = true
     }
 }
