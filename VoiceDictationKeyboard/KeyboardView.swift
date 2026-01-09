@@ -213,7 +213,88 @@ struct KeyboardView: View {
     }
 
     private func handleMicButtonTap() {
-        // TODO: Implementation in Task 4
+        if isRecording {
+            stopRecording()
+        } else {
+            startRecording()
+        }
+    }
+
+    private func startRecording() {
+        Task {
+            // Check permissions
+            var hasPermission = speechService.hasPermission
+            if !hasPermission {
+                hasPermission = await speechService.requestPermissions()
+            }
+
+            guard hasPermission else {
+                await MainActor.run {
+                    errorMessage = "Microphone and speech recognition access required - enable in Settings"
+                }
+                return
+            }
+
+            // Start recording
+            do {
+                try await speechService.startRecording()
+                await MainActor.run {
+                    isRecording = true
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = "Failed to start recording: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func stopRecording() {
+        isRecording = false
+
+        // Get final transcript
+        let transcript = speechService.stopRecording()
+
+        guard !transcript.isEmpty else {
+            errorMessage = "No speech detected"
+            return
+        }
+
+        // Process transcript
+        processTranscript(transcript)
+    }
+
+    private func processTranscript(_ rawText: String) {
+        Task {
+            await MainActor.run {
+                isProcessing = true
+            }
+
+            do {
+                // Clean up text
+                let cleanedText = try await cleanupService.cleanupText(rawText)
+
+                await MainActor.run {
+                    isProcessing = false
+
+                    // Insert cleaned text
+                    textDocumentProxy.insertText(cleanedText)
+                }
+            } catch {
+                // Fall back to raw text on error
+                await MainActor.run {
+                    isProcessing = false
+
+                    if error.localizedDescription.contains("unavailable") {
+                        errorMessage = "Apple Intelligence unavailable - inserted raw text"
+                        textDocumentProxy.insertText(rawText)
+                    } else {
+                        errorMessage = "Processing failed: \(error.localizedDescription)"
+                        textDocumentProxy.insertText(rawText)
+                    }
+                }
+            }
+        }
     }
 
     private func insertKey(_ key: String) {
