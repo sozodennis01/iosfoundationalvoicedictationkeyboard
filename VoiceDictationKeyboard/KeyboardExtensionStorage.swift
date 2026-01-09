@@ -1,5 +1,8 @@
 import Foundation
 
+// Use shared DictationState directly (file included in target)
+internal typealias DictationSession = DictationState
+
 /// Minimal storage service for the keyboard extension target.
 /// Provides only the APIs used by KeyboardState.
 final class KeyboardSharedStorageService {

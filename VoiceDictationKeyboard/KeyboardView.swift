@@ -8,12 +8,27 @@
 import SwiftUI
 import UIKit
 
-/// Main SwiftUI keyboard view - basic QWERTY layout with dictation mic button
+/// Main SwiftUI keyboard view - basic QWERTY layout with mic and paste buttons
 struct KeyboardView: View {
     let textDocumentProxy: UITextDocumentProxy
+    let urlOpener: ((URL, @escaping (Bool) -> Void) -> Void)?
+    let hasFullAccess: Bool
 
     @State private var isUppercase = false
-    @StateObject private var keyboardState: KeyboardState = KeyboardState()
+    @StateObject private var dictationService: KeyboardDictationService
+
+    init(textDocumentProxy: UITextDocumentProxy, urlOpener: ((URL, @escaping (Bool) -> Void) -> Void)? = nil, hasFullAccess: Bool = false) {
+        self.textDocumentProxy = textDocumentProxy
+        self.urlOpener = urlOpener
+        self.hasFullAccess = hasFullAccess
+        self._dictationService = StateObject(wrappedValue: {
+            let service = KeyboardDictationService()
+            service.urlOpener = urlOpener
+            service.textDocumentProxy = textDocumentProxy
+            service.hasFullAccess = hasFullAccess
+            return service
+        }())
+    }
 
     // Keyboard layouts
     private let topRow = ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"]
@@ -22,224 +37,145 @@ struct KeyboardView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top bar with mic button (only show when idle)
-            if case KeyboardState.DictationUIState.idle = keyboardState.dictationState {
-                HStack {
-                    Spacer()
+            // Top bar with mic and paste buttons and status
+            HStack(spacing: 8) {
+                Spacer()
 
-                    Button(action: keyboardState.startDictation) {
-                        Image(systemName: "mic.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(.gray)
-                            .frame(width: 44, height: 44)
-                            .background(Color(uiColor: .systemGray5))
-                            .cornerRadius(8)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                }
-                .background(Color(uiColor: .systemGray6))
-            }
+                // Status text
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(statusText)
+                        .font(.caption)
+                        .foregroundColor(statusColor)
 
-            // Error message banner for idle state errors
-            if case KeyboardState.DictationUIState.error(let message) = keyboardState.dictationState, !keyboardState.showDictationOverlay {
-                Text(message)
-                    .font(.caption)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity)
-                    .background(Color.red)
-                    .onTapGesture {
-                        keyboardState.dictationState = KeyboardState.DictationUIState.idle
-                        keyboardState.showDictationOverlay = false
-                    }
-            }
-
-            // Keyboard layout (only show when idle)
-            if case KeyboardState.DictationUIState.idle = keyboardState.dictationState {
-                VStack(spacing: 8) {
-                    // Keyboard layout
-                    VStack(spacing: 6) {
-                        // Top row
-                        HStack(spacing: 3) {
-                            ForEach(topRow, id: \.self) { key in
-                                KeyButton(letter: key, isUppercase: isUppercase) {
-                                    insertKey(key)
-                                }
-                            }
-                        }
-
-                        // Middle row
-                        HStack(spacing: 3) {
-                            Spacer().frame(width: 20) // Offset for ergonomics
-                            ForEach(middleRow, id: \.self) { key in
-                                KeyButton(letter: key, isUppercase: isUppercase) {
-                                    insertKey(key)
-                                }
-                            }
-                            Spacer().frame(width: 20)
-                        }
-
-                        // Bottom row with shift and backspace
-                        HStack(spacing: 3) {
-                            // Shift key
-                            Button(action: {
-                                isUppercase.toggle()
-                            }) {
-                                Image(systemName: isUppercase ? "shift.fill" : "shift")
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundColor(.primary)
-                                    .frame(width: 42, height: 42)
-                                    .background(Color(uiColor: .systemGray5))
-                                    .cornerRadius(5)
-                            }
-
-                            ForEach(bottomRow, id: \.self) { key in
-                                KeyButton(letter: key, isUppercase: isUppercase) {
-                                    insertKey(key)
-                                }
-                            }
-
-                            // Backspace key
-                            Button(action: {
-                                textDocumentProxy.deleteBackward()
-                            }) {
-                                Image(systemName: "delete.left")
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundColor(.primary)
-                                    .frame(width: 42, height: 42)
-                                    .background(Color(uiColor: .systemGray5))
-                                    .cornerRadius(5)
-                            }
-                        }
-
-                        // Space bar row
-                        HStack(spacing: 3) {
-                            // Space bar
-                            Button(action: {
-                                textDocumentProxy.insertText(" ")
-                            }) {
-                                Text("space")
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundColor(.primary)
-                                    .frame(maxWidth: .infinity, minHeight: 42)
-                                    .background(Color(uiColor: .systemGray5))
-                                    .cornerRadius(5)
-                            }
-
-                            // Return key
-                            Button(action: {
-                                textDocumentProxy.insertText("\n")
-                            }) {
-                                Text("return")
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundColor(.white)
-                                    .frame(width: 80, height: 42)
-                                    .background(Color.blue)
-                                    .cornerRadius(5)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 3)
-                    .padding(.vertical, 8)
-                }
-            }
-
-            // Dictation overlay (covers entire keyboard when active)
-            if keyboardState.showDictationOverlay {
-                VStack(spacing: 20) {
-                    Spacer()
-
-                    switch keyboardState.dictationState {
-                    case KeyboardState.DictationUIState.arming:
-                        Text("Opening app...")
-                            .font(.title2)
-                            .foregroundColor(.primary)
-
-                    case KeyboardState.DictationUIState.listening:
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 100, height: 100)
-                            .overlay(
-                                Image(systemName: "mic.fill")
-                                    .font(.system(size: 50))
-                                    .foregroundColor(.white)
-                            )
-                            .scaleEffect(true ? 1.2 : 1.0)
-                            .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: true)
-
-                        Text("Listening...")
-                            .font(.title2)
-                            .foregroundColor(.primary)
-
-                        Text("Tap to stop")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-
-                    case KeyboardState.DictationUIState.processing:
-                        ProgressView()
-                            .scaleEffect(2)
-
-                        Text("Processing...")
-                            .font(.title2)
-                            .foregroundColor(.primary)
-
-                    case KeyboardState.DictationUIState.error(let message):
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 50))
+                    if let lastError = dictationService.lastError, !lastError.isEmpty {
+                        Text(lastError)
+                            .font(.caption2)
                             .foregroundColor(.red)
-
-                        Text("Error")
-                            .font(.title2)
-                            .foregroundColor(.primary)
-
-                        Text(message)
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-
-                    case KeyboardState.DictationUIState.idle:
-                        EmptyView()
-                    }
-
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(uiColor: .systemGray6))
-                .onTapGesture {
-                    switch keyboardState.dictationState {
-                    case KeyboardState.DictationUIState.listening:
-                        keyboardState.stopDictation()
-                    case KeyboardState.DictationUIState.error:
-                        keyboardState.dictationState = KeyboardState.DictationUIState.idle
-                        keyboardState.showDictationOverlay = false
-                    default:
-                        break
+                            .multilineTextAlignment(.trailing)
+                            .lineLimit(2)
                     }
                 }
+
+                // Mic button
+                Button(action: {
+                    Task {
+                        await dictationService.toggleRecording()
+                    }
+                }) {
+                    Image(systemName: micIcon)
+                        .font(.system(size: 20))
+                        .foregroundColor(micColor)
+                        .frame(width: 44, height: 44)
+                        .background(Color(uiColor: .systemGray5))
+                        .cornerRadius(8)
+                }
+
+                // Paste button
+                Button(action: {
+                    dictationService.paste(into: textDocumentProxy)
+                }) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 20))
+                        .foregroundColor(.gray)
+                        .frame(width: 44, height: 44)
+                        .background(Color(uiColor: .systemGray5))
+                        .cornerRadius(8)
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color(uiColor: .systemGray6))
+
+            // Keyboard layout
+            VStack(spacing: 8) {
+                VStack(spacing: 6) {
+                    // Top row
+                    HStack(spacing: 3) {
+                        ForEach(topRow, id: \.self) { key in
+                            KeyButton(letter: key, isUppercase: isUppercase) {
+                                insertKey(key)
+                            }
+                        }
+                    }
+
+                    // Middle row
+                    HStack(spacing: 3) {
+                        Spacer().frame(width: 20)
+                        ForEach(middleRow, id: \.self) { key in
+                            KeyButton(letter: key, isUppercase: isUppercase) {
+                                insertKey(key)
+                            }
+                        }
+                        Spacer().frame(width: 20)
+                    }
+
+                    // Bottom row with shift and backspace
+                    HStack(spacing: 3) {
+                        // Shift key
+                        Button(action: {
+                            isUppercase.toggle()
+                        }) {
+                            Image(systemName: isUppercase ? "shift.fill" : "shift")
+                                .font(.system(size: 16))
+                                .foregroundColor(.primary)
+                                .frame(width: 42, height: 42)
+                                .background(Color(uiColor: .systemGray5))
+                                .cornerRadius(5)
+                        }
+
+                        ForEach(bottomRow, id: \.self) { key in
+                            KeyButton(letter: key, isUppercase: isUppercase) {
+                                insertKey(key)
+                            }
+                        }
+
+                        // Backspace key
+                        Button(action: {
+                            textDocumentProxy.deleteBackward()
+                        }) {
+                            Image(systemName: "delete.left")
+                                .font(.system(size: 16))
+                                .foregroundColor(.primary)
+                                .frame(width: 42, height: 42)
+                                .background(Color(uiColor: .systemGray5))
+                                .cornerRadius(5)
+                        }
+                    }
+
+                    // Space bar row
+                    HStack(spacing: 3) {
+                        // Space bar
+                        Button(action: {
+                            textDocumentProxy.insertText(" ")
+                        }) {
+                            Text("space")
+                                .font(.system(size: 14))
+                                .foregroundColor(.primary)
+                                .frame(maxWidth: .infinity, minHeight: 42)
+                                .background(Color(uiColor: .systemGray5))
+                                .cornerRadius(5)
+                        }
+
+                        // Return key
+                        Button(action: {
+                            textDocumentProxy.insertText("\n")
+                        }) {
+                            Text("return")
+                                .font(.system(size: 14))
+                                .foregroundColor(.white)
+                                .frame(width: 80, height: 42)
+                                .background(Color.blue)
+                                .cornerRadius(5)
+                        }
+                    }
+                }
+                .padding(.horizontal, 3)
+                .padding(.vertical, 8)
             }
         }
         .background(Color(uiColor: .systemGray6))
-        .onAppear {
-            // Configure keyboard state with handlers for opening the host app
-            keyboardState.configure(
-                textDocumentProxy: textDocumentProxy,
-                openURLHandler: { url in
-                    // Find the keyboard view controller and use its extension context
-                    var responder: UIResponder? = textDocumentProxy as? UIResponder
-                    while let r = responder {
-                        if let keyboardVC = r as? UIInputViewController {
-                            // Use extension context to open URL (works from keyboard extensions)
-                            keyboardVC.extensionContext?.open(url, completionHandler: nil)
-                            return
-                        }
-                        responder = r.next
-                    }
-                    print("Failed to find UIInputViewController for openURL")
-                }
-            )
-        }
     }
 
     private func insertKey(_ key: String) {
@@ -249,6 +185,41 @@ struct KeyboardView: View {
         // Auto-disable shift after one character
         if isUppercase {
             isUppercase = false
+        }
+    }
+
+    private var statusText: String {
+        switch dictationService.status {
+        case .idle: "Ready"
+        case .recording: "Recording..."
+        case .processing: "Processing..."
+        case .ready: "Tap Paste"
+        case .error: "Error"
+        }
+    }
+
+    private var statusColor: Color {
+        switch dictationService.status {
+        case .idle: .gray
+        case .recording: .red
+        case .processing: .orange
+        case .ready: .green
+        case .error: .red
+        }
+    }
+
+    private var micIcon: String {
+        switch dictationService.status {
+        case .recording: "stop.fill"
+        default: "mic.fill"
+        }
+    }
+
+    private var micColor: Color {
+        switch dictationService.status {
+        case .recording: .red
+        case .error: .red
+        default: .gray
         }
     }
 }
@@ -294,4 +265,3 @@ private class PreviewTextDocumentProxy: NSObject, UITextDocumentProxy {
     func insertText(_ text: String) {}
     func deleteBackward() {}
 }
-

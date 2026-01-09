@@ -22,31 +22,6 @@ Host App (mic + processing) → App Group → Keyboard Extension (insert text)
 ## Key Constraint
 iOS keyboard extensions **cannot access the microphone**. The keyboard opens the host app to record, then returns cleaned text via App Group. This is the same pattern used by Wispr Flow.
 
-## Project Structure
-```
-localspeechtotext_keyboard/
-├── localspeechtotext_keyboard/     # Host App
-│   ├── Services/                   # Speech, LLM, Storage services
-│   └── Views/                      # DictationView, SettingsView
-├── VoiceDictationKeyboard/         # Keyboard Extension
-├── Shared/                         # Models & Constants (both targets)
-├── Tests/                          # Unit & Integration Tests
-│   ├── SharedTests/                # Tests for shared models
-│   ├── ServiceTests/               # Tests for services
-│   └── IntegrationTests/           # Cross-component tests
-└── IMPLEMENTATION_PLAN.md          # Detailed implementation guide
-```
-
-## Implementation Status
-See `IMPLEMENTATION_PLAN.md` for full plan and checklist.
-
-**Current Phase**: Core services implemented and building successfully.
-
-✅ `SpeechRecognitionService.swift` - Live mic transcription with SpeechAnalyzer
-✅ `TextCleanupService.swift` - LLM cleanup with availability checking
-✅ `SharedStorageService.swift` - App Group communication
-✅ Views (DictationView, SettingsView, ContentView) - Basic UI implemented
-
 ## Key Files Reference
 
 | File | Purpose |
@@ -227,75 +202,100 @@ guard hasPermission else { return }
 7. Keyboard shows "Insert" button
 8. Text inserted
 
-## Testing Strategy
-
-### Unit Tests (Automated via XCTest)
-Write unit tests for components that don't require hardware:
-
-**Shared Models:**
-- `DictationState`: Codable encoding/decoding
-- `AppConstants`: Validate constants
-
-**Services (with mocking):**
-- `SharedStorageService`: Mock UserDefaults, test save/read operations
-- `TextCleanupService`: Mock LLM responses, test prompt formatting
-- `SpeechRecognitionService`: Test permission states, error handling
-
-### Integration Tests (Automated)
-- App Group communication between targets
-- URL scheme handling and routing
-- State transitions (idle → recording → processing → ready)
-
-### End-to-End Tests (Manual on Hardware Device)
-**Cannot be automated** - requires real device testing:
-- Real microphone input and speech recognition
-- Actual LLM text cleanup quality
-- Keyboard extension in different apps (Messages, Notes, Safari)
-- Full dictation workflow
-- Permission prompts and user interactions
-
-### Test Commands
-```bash
-# Run all unit tests
-xcodebuild test -scheme localspeechtotext_keyboard -destination 'platform=iOS Simulator,name=iPhone 16'
-
-# Run specific test suite
-xcodebuild test -scheme localspeechtotext_keyboard -only-testing:SharedTests
-
-# Run tests from Xcode
-# Cmd+U or Product → Test
-```
-
-### Coverage Goals
-- **Shared models**: 100% (simple data structures)
-- **Services**: 80%+ (business logic, with mocked dependencies)
-- **Views**: Manual testing only (SwiftUI previews + device)
-- **E2E flow**: Manual device testing required
-
 ## Commands
 
 ```bash
-# Open in Xcode
-open localspeechtotext_keyboard.xcodeproj
-
 # Build (from Xcode or xcodebuild)
-xcodebuild -scheme localspeechtotext_keyboard -destination 'platform=iOS Simulator,name=iPhone 16'
+xcodebuild -scheme localspeechtotext_keyboard -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
-## Manual Xcode Steps Required
-1. Add keyboard extension target (File → New → Target → Custom Keyboard Extension)
-2. Enable App Groups capability on both targets
-3. Add URL scheme `voicedictation` to host app
-4. Add microphone + speech recognition usage descriptions to Info.plist
+## Wispr Flow Implementation (✅ IMPLEMENTED)
 
-## Notes for Future Sessions
-- **READ THE iOS 26 API GUIDE ABOVE** - These APIs are new and easy to get wrong
-- Always check `IMPLEMENTATION_PLAN.md` for current progress
-- Keyboard extension requires `RequestsOpenAccess = YES` in Info.plist
-- Test on real device - keyboard extensions don't work well in simulator
-- LLM has cold start latency on first call - show loading indicator
-- Write unit tests for all services and models as you implement them
-- Manual E2E testing must be done by user on physical iOS device
-- Run tests with `Cmd+U` in Xcode or via `xcodebuild test` command
-- When searching for iOS 26 API docs, include "WWDC25" or "2025" in search queries
-- The SpeechAnalyzer uses AsyncStream pattern - don't guess method names like `analyze()` or `process()`
+### Architecture Overview
+
+**🎯 Core Pattern:** Background audio recording with Live Activities + Darwin Notifications
+
+The implementation follows the Wispr Flow pattern with these key components:
+
+#### 1. **Background Audio Session** ✅
+```swift
+// In SpeechRecognitionService.swift
+let audioSession = AVAudioSession.sharedInstance()
+try audioSession.setCategory(
+    .playAndRecord,
+    mode: .default,
+    options: [.mixWithOthers, .defaultToSpeaker]
+)
+try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+```
+
+#### 2. **Live Activities (Dynamic Island)** ✅
+```swift
+// In LiveActivityService.swift
+let activity = try Activity.request(
+    attributes: RecordingActivityAttributes(name: "Voice Dictation"),
+    content: .init(state: initialState, staleDate: nil)
+)
+// Updates status in Dynamic Island: "Listening..." → "Processing..." → "Complete"
+```
+
+#### 3. **Darwin Notifications (Cross-Process IPC)** ✅
+```swift
+// Host App posts notification when text is ready
+DarwinNotificationCenter.post(.textReady)
+
+// Keyboard Extension observes and auto-inserts text
+darwinObserver = DarwinNotificationCenter.observe(.textReady) {
+    self?.handleTextReadyNotification()
+}
+```
+
+### Complete Flow (Wispr Flow Pattern)
+1. User taps mic in keyboard → URL scheme opens host app
+2. Host app configures background audio session → starts recording
+3. **Live Activity started** → Dynamic Island shows "Listening..." with duration counter
+4. User continues using any app while keyboard stays visible
+5. User taps mic again to stop → recording stops
+6. **Live Activity updates** → "Processing..." in Dynamic Island
+7. Speech recognition → LLM text cleanup → save to App Group
+8. **Darwin notification posted** → keyboard extension receives instantly
+9. **Text auto-inserted** via `textDocumentProxy.insertText()`
+10. **Live Activity ended** → Dynamic Island dismisses
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `Shared/Models/RecordingActivityAttributes.swift` | Live Activity model definition |
+| `localspeechtotext_keyboard/Services/LiveActivityService.swift` | Manages Live Activities lifecycle |
+| `Shared/Services/DarwinNotificationCenter.swift` | Cross-process notification wrapper |
+| `localspeechtotext_keyboard/Services/SpeechRecognitionService.swift` | Background audio + speech recognition |
+| `localspeechtotext_keyboard/Views/DictationView.swift` | Coordinates recording, cleanup, Live Activities |
+| `VoiceDictationKeyboard/KeyboardState.swift` | Handles Darwin notifications + auto-insert |
+
+### Configuration Files
+
+**localspeechtotext-keyboard-Info.plist:**
+```xml
+<key>UIBackgroundModes</key>
+<array>
+  <string>audio</string>
+</array>
+<key>NSSupportsLiveActivities</key>
+<true/>
+```
+
+### Why This Implementation Works
+- ✅ **Background audio** allows recording while app is backgrounded
+- ✅ **Live Activities** provide non-intrusive Dynamic Island status
+- ✅ **Darwin Notifications** enable instant cross-process communication (no polling!)
+- ✅ **Auto-insert** eliminates manual paste button tap
+- ✅ **App Group** maintains data persistence between processes
+- ✅ **URL scheme** triggers recording from keyboard extension
+
+---
+
+## URI URL
+bundle identifiers keyboard: sozodennis.localspeechtotext-keyboard.VoiceDictationKeyboard
+bundle identifier host app: sozodennis.localspeechtotext-keyboard
+app group: group.sozodennis.voicedictation

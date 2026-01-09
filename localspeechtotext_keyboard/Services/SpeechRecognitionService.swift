@@ -52,6 +52,15 @@ class SpeechRecognitionService: ObservableObject {
             throw SpeechRecognitionError.permissionDenied
         }
 
+        // Configure audio session for background recording with mixing
+        let audioSession = AVAudioSession.sharedInstance()
+        try audioSession.setCategory(
+            .playAndRecord,
+            mode: .default,
+            options: [.mixWithOthers, .defaultToSpeaker]
+        )
+        try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+
         // Create transcriber with default locale for volatile (real-time) results
         let newTranscriber = SpeechTranscriber(
             locale: Locale.current,
@@ -98,7 +107,7 @@ class SpeechRecognitionService: ObservableObject {
                     for try await result in newTranscriber.results {
                         let text = String(result.text.characters)
                         await MainActor.run {
-                            self.currentTranscript = text
+                            self.currentTranscript += text
                         }
                         continuation.yield(text)
                     }
@@ -194,6 +203,9 @@ class SpeechRecognitionService: ObservableObject {
         analyzer = nil
         analyzerFormat = nil
         isRecording = false
+        
+        // Deactivate audio session
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 }
 

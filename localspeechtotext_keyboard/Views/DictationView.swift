@@ -8,6 +8,7 @@ struct DictationView: View {
     @StateObject private var speechService = SpeechRecognitionService()
     @StateObject private var cleanupService = TextCleanupService()
     @State private var storageService = SharedStorageService()
+    @State private var liveActivityService = LiveActivityService()
 
     @State private var currentTranscript = ""
     @State private var cleanedText = ""
@@ -208,6 +209,9 @@ struct DictationView: View {
                 currentTranscript = ""
                 cleanedText = ""
 
+                // Start Live Activity for Dynamic Island
+                try await liveActivityService.startActivity()
+
                 // Start transcription
                 let transcriptStream = try await speechService.startTranscription()
 
@@ -217,6 +221,7 @@ struct DictationView: View {
             } catch {
                 errorMessage = error.localizedDescription
                 isRecording = false
+                await liveActivityService.endActivity()
             }
         }
     }
@@ -225,12 +230,20 @@ struct DictationView: View {
         isRecording = false
         speechService.stopTranscription()
 
+        // Update Live Activity status
+        Task {
+            await liveActivityService.updateStatus("Processing...", isRecording: false)
+        }
+
         // Process the transcript
         processTranscript()
     }
 
     private func processTranscript() {
         guard !currentTranscript.isEmpty else {
+            Task {
+                await liveActivityService.endActivity()
+            }
             return
         }
 
@@ -251,6 +264,12 @@ struct DictationView: View {
 
                 storageService.saveState(state)
                 storageService.saveText(cleanedText)
+                
+                // Post Darwin notification to keyboard extension
+                DarwinNotificationCenter.shared.post(name: "group.sozodennis.voicedictation.textReady")
+
+                // End Live Activity
+                await liveActivityService.endActivity()
 
                 // Show success
                 withAnimation {
@@ -258,6 +277,7 @@ struct DictationView: View {
                 }
             } catch {
                 errorMessage = error.localizedDescription
+                await liveActivityService.endActivity()
             }
 
             isProcessing = false

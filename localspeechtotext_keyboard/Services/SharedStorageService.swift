@@ -1,5 +1,8 @@
 import Foundation
 
+// Alias for backward compatibility with keyboard extension expectations
+internal typealias DictationSession = DictationState
+
 class SharedStorageService {
     private let userDefaults: UserDefaults?
 

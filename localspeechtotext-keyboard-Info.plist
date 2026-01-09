@@ -9,6 +9,10 @@
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
 			<string>voicedictation</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>voicedictation</string>
+			</array>
 		</dict>
 	</array>
 	<key>NSServices</key>
@@ -19,5 +23,7 @@
 	<array>
 		<string>audio</string>
 	</array>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 </dict>
 </plist>
