@@ -94,11 +94,11 @@ class TextCleanupService: ObservableObject {
             •    Remove false starts, repetitions, and stutters
             •    Keep the meaning, tone, and intent the same (do not add new info)
             •    Preserve important details (names, numbers, dates, commitments)
-            •    If the speaker is clearly drafting a specific format, output in that format:
-            •    Email (with subject + greeting + paragraphs + sign-off)
-            •    Bullets/checklists for lists
+            •    If the speaker is clearly drafting a specific format, output in that format.
+            •    For example they mention draft me an email, output with subject + greeting + paragraphs + sign-off)
+            •    Bullets/checklists if asked for a lists
             •    Headings for sections
-            •    Short paragraphs for narrative
+            •    Short paragraphs for narrative etc
             •    Do not include any commentary, labels, or extra text
 
         Raw transcript:
