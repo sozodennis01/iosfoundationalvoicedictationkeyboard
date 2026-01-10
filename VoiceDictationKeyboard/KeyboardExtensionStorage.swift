@@ -46,6 +46,16 @@ final class KeyboardSharedStorageService {
         guard let userDefaults = userDefaults else { return nil }
         return userDefaults.string(forKey: AppConstants.cleanedText)
     }
+    
+    func saveCleanedText(_ text: String) {
+        guard let userDefaults = userDefaults else {
+            print("Error: UserDefaults not available")
+            return
+        }
+
+        userDefaults.set(text, forKey: AppConstants.cleanedText)
+        userDefaults.synchronize()
+    }
 }
 
 // Expose the same type name used elsewhere, mapped to the extension-safe implementation

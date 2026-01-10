@@ -83,14 +83,16 @@ class KeyboardDictationService: ObservableObject {
             // Auto-insert text into text field
             textDocumentProxy?.insertText(text)
 
-            status = .ready
+            status = .idle
             lastError = nil
 
-            logger.info("Text auto-inserted successfully")
+            // Clear cleaned text after use to avoid re-paste loops
+            storageService.saveCleanedText("")
+            logger.info("Text auto-inserted successfully; status reset to idle")
         } else {
             logger.warning("No cleaned text available in App Group")
             lastError = "No text available"
-            status = .error
+            status = .idle
         }
     }
 
