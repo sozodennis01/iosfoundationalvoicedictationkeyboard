@@ -12,10 +12,11 @@ import Foundation
 @available(iOS 26.0, *)
 struct localspeechtotext_keyboardApp: App {
     @State private var shouldAutoStart = false
+    @State private var isColdStart = false
 
     var body: some Scene {
         WindowGroup {
-            ContentView(shouldAutoStart: $shouldAutoStart)
+            ContentView(shouldAutoStart: $shouldAutoStart, isColdStart: $isColdStart)
                 .onOpenURL { url in
                     handleURL(url)
                 }
@@ -30,10 +31,7 @@ struct localspeechtotext_keyboardApp: App {
             return
         }
 
-        // Mark host app as ready for keyboard extensions
-        SharedState.setHostAppReady(true)
-
-        // Trigger auto-start in DictationView
-        shouldAutoStart = true
+        // Show cold start view instead of going directly to DictationView
+        isColdStart = true
     }
 }
