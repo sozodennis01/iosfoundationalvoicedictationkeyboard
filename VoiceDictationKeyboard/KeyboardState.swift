@@ -87,7 +87,7 @@ class KeyboardDictationService: ObservableObject {
             lastError = nil
 
             // Clear cleaned text after use to avoid re-paste loops
-            storageService.saveCleanedText("")
+            //storageService.saveCleanedText("")
             logger.info("Text auto-inserted successfully; status reset to idle")
         } else {
             logger.warning("No cleaned text available in App Group")

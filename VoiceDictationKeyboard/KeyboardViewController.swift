@@ -50,7 +50,10 @@ class KeyboardViewController: UIInputViewController {
             urlOpener: { [weak self] url, completion in
                 self?.openURLWorkaround(url, completion: completion)
             },
-            hasFullAccess: hasFullAccess
+            hasFullAccess: hasFullAccess,
+            keyboardSwitcher: { [weak self] in
+                self?.advanceToNextInputMode()
+            }
         )
         hostingController = UIHostingController(rootView: keyboardView)
 
