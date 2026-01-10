@@ -20,6 +20,10 @@ struct KeyboardView: View {
     @State private var isCapsLocked = false
     @StateObject private var dictationService: KeyboardDictationService
 
+    // Recording animation state
+    @State private var isPulsing = false
+    @State private var waveformPhase: Double = 0
+
     // Claude color theme
     private let claudeOrange = Color(red: 218/255, green: 119/255, blue: 86/255)  // #DA7756
     private let claudeCream = Color(red: 250/255, green: 249/255, blue: 246/255)  // #FAF9F6
@@ -62,89 +66,52 @@ struct KeyboardView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top bar with mic and paste buttons and status - Claude themed
-            HStack(spacing: 8) {
-                Spacer()
+            // Top bar with mic button and status - Claude themed (hidden during recording)
+            if dictationService.status != .recording {
+                HStack(spacing: 8) {
+                    Spacer()
 
-                // Status text
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(statusText)
-                        .font(.caption)
-                        .foregroundColor(statusColor)
+                    // Status text
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(statusText)
+                            .font(.caption)
+                            .foregroundColor(statusColor)
 
-                    if let lastError = dictationService.lastError, !lastError.isEmpty {
-                        Text(lastError)
-                            .font(.caption2)
-                            .foregroundColor(claudeOrange)
-                            .multilineTextAlignment(.trailing)
-                            .lineLimit(2)
+                        if let lastError = dictationService.lastError, !lastError.isEmpty {
+                            Text(lastError)
+                                .font(.caption2)
+                                .foregroundColor(claudeOrange)
+                                .multilineTextAlignment(.trailing)
+                                .lineLimit(2)
+                        }
                     }
+
+                    // Mic button
+                    Button(action: {
+                        Task {
+                            await dictationService.toggleRecording()
+                        }
+                    }) {
+                        Image(systemName: micIcon)
+                            .font(.system(size: 20))
+                            .foregroundColor(micColor)
+                            .frame(width: 44, height: 44)
+                            .background(claudeCream)
+                            .cornerRadius(12)
+                            .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 2)
+                    }
+
+                    Spacer()
                 }
-
-                // Mic button or Recording controls
-                if dictationService.status == .recording {
-                    // Recording mode: X (cancel) and ✓ (confirm) buttons
-                    HStack(spacing: 8) {
-                        // Cancel button (X)
-                        Button(action: {
-                            dictationService.cancelRecording()
-                        }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(.white)
-                                .frame(width: 44, height: 44)
-                                .background(Color.red)
-                                .cornerRadius(22)
-                        }
-
-                        // Confirm button (✓)
-                        Button(action: {
-                            dictationService.confirmRecording()
-                        }) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(.white)
-                                .frame(width: 44, height: 44)
-                                .background(Color.green)
-                                .cornerRadius(22)
-                        }
-                    }
-                } else {
-                    // Normal mode: Mic button
-                    HStack(spacing: 8) {
-                        // Mic button
-                        Button(action: {
-                            Task {
-                                await dictationService.toggleRecording()
-                            }
-                        }) {
-                            Image(systemName: micIcon)
-                                .font(.system(size: 20))
-                                .foregroundColor(micColor)
-                                .frame(width: 44, height: 44)
-                                .background(claudeCream)
-                                .cornerRadius(12)
-                                .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 2)
-                        }
-                    }
-                }
-
-                Spacer()
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(claudeTan.opacity(0.3))
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(claudeTan.opacity(0.3))
 
-            // Keyboard layout or recording placeholder
+            // Keyboard layout or recording view
             if dictationService.status == .recording {
-                // Recording mode: Show minimal UI, hide keyboard
-                VStack {
-                    Text("Recording in progress...")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .padding(.vertical, 20)
-                }
-                .background(claudeCream)
+                // Recording mode: Show Claude-themed recording UI
+                recordingView
             } else {
                 // Normal keyboard layout - Claude themed
                 mainKeyboardView
@@ -440,6 +407,139 @@ struct KeyboardView: View {
             }
         }
         .padding(.horizontal, 6)
+    }
+
+    // MARK: - Claude-themed Recording View
+    private var recordingView: some View {
+        VStack(spacing: 16) {
+            Spacer()
+
+            // Pulsing recording indicator with waveform
+            ZStack {
+                // Outer pulse ring
+                Circle()
+                    .stroke(claudeOrange.opacity(0.3), lineWidth: 3)
+                    .frame(width: 80, height: 80)
+                    .scaleEffect(isPulsing ? 1.3 : 1.0)
+                    .opacity(isPulsing ? 0 : 0.6)
+
+                // Inner circle with mic icon
+                Circle()
+                    .fill(claudeOrange)
+                    .frame(width: 60, height: 60)
+                    .shadow(color: claudeOrange.opacity(0.4), radius: 8, x: 0, y: 4)
+
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundColor(.white)
+            }
+
+            // Animated 5-bar waveform visualizer
+            HStack(spacing: 4) {
+                ForEach(0..<5, id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(claudeOrange)
+                        .frame(width: 4, height: waveformHeight(for: index))
+                        .animation(
+                            .easeInOut(duration: 0.3)
+                                .repeatForever(autoreverses: true)
+                                .delay(Double(index) * 0.1),
+                            value: waveformPhase
+                        )
+                }
+            }
+            .frame(height: 32)
+
+            // Recording text with breathing animation
+            Text("Recording...")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(claudeOrange)
+                .opacity(isPulsing ? 0.7 : 1.0)
+
+            Spacer()
+
+            // Control buttons
+            HStack(spacing: 32) {
+                // Cancel button
+                Button(action: {
+                    dictationService.cancelRecording()
+                }) {
+                    VStack(spacing: 6) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.red.opacity(0.1))
+                                .frame(width: 56, height: 56)
+
+                            Circle()
+                                .stroke(Color.red, lineWidth: 2)
+                                .frame(width: 56, height: 56)
+
+                            Image(systemName: "xmark")
+                                .font(.system(size: 22, weight: .semibold))
+                                .foregroundColor(.red)
+                        }
+                        Text("Cancel")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                // Done button
+                Button(action: {
+                    dictationService.confirmRecording()
+                }) {
+                    VStack(spacing: 6) {
+                        ZStack {
+                            Circle()
+                                .fill(claudeOrange)
+                                .frame(width: 56, height: 56)
+                                .shadow(color: claudeOrange.opacity(0.4), radius: 6, x: 0, y: 3)
+
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 22, weight: .semibold))
+                                .foregroundColor(.white)
+                        }
+                        Text("Done")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .padding(.bottom, 24)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .background(claudeCream)
+        .onAppear {
+            startRecordingAnimations()
+        }
+        .onDisappear {
+            stopRecordingAnimations()
+        }
+    }
+
+    private func waveformHeight(for index: Int) -> CGFloat {
+        let baseHeight: CGFloat = 12
+        let variation: CGFloat = 18
+        let phase = sin(waveformPhase + Double(index) * 0.8)
+        return baseHeight + CGFloat(phase + 1) / 2 * variation
+    }
+
+    private func startRecordingAnimations() {
+        // Start pulse animation
+        withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: false)) {
+            isPulsing = true
+        }
+        // Start waveform animation
+        withAnimation(.linear(duration: 0.5).repeatForever(autoreverses: false)) {
+            waveformPhase = .pi * 2
+        }
+    }
+
+    private func stopRecordingAnimations() {
+        isPulsing = false
+        waveformPhase = 0
     }
 
     private func cycleKeyboardMode() {
