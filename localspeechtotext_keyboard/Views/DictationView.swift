@@ -19,6 +19,8 @@ struct DictationView: View {
     @State private var startRecordingObserver: DarwinNotificationObservation?
     @State private var stopRecordingObserver: DarwinNotificationObservation?
     @State private var cancelRecordingObserver: DarwinNotificationObservation?
+    @State private var pingObserver: DarwinNotificationObservation?
+    @State private var isAudioReady = false
 
     var body: some View {
         VStack(spacing: 30) {
@@ -57,18 +59,38 @@ struct DictationView: View {
         }
         .onAppear {
             setupNotificationObservers()
-
-            // Mark host app as ready for keyboard extensions (WisprFlow pattern)
-            SharedState.setHostAppReady(true)
+            setupPingListener()
 
             // Initialize audio session for immediate recording (keeps it "warm")
+            // Only mark ready AFTER successful initialization
             Task {
                 do {
                     try await speechService.initializeAudioSession()
                     print("Audio session initialized successfully")
+                    isAudioReady = true
+                    // Mark host app as ready
+                    SharedState.setHostAppReady(true)
                 } catch {
                     print("Failed to initialize audio session: \(error.localizedDescription)")
+                    isAudioReady = false
+                    // Leave hostAppReady as false - keyboard will show "Start App"
                 }
+            }
+        }
+        .onDisappear {
+            // Clear ready state when view disappears
+            SharedState.setHostAppReady(false)
+        }
+    }
+
+    // MARK: - Ping-Pong (instant alive check from keyboard)
+
+    private func setupPingListener() {
+        // Listen for ping from keyboard - respond with pong if we're ready
+        pingObserver = DarwinNotificationCenter.shared.addObserver(name: AppConstants.pingNotification) { [self] in
+            if isAudioReady {
+                // We're alive and ready - respond with pong
+                DarwinNotificationCenter.shared.post(name: AppConstants.pongNotification)
             }
         }
     }

@@ -10,6 +10,7 @@ import os
 class KeyboardDictationService: ObservableObject {
     @Published var status: DictationStatus = .idle
     @Published var lastError: String? = nil
+    @Published var isHostAppReady: Bool = false
 
     private var transcriber: SpeechTranscriber?
     private var analyzer: SpeechAnalyzer?
@@ -25,6 +26,8 @@ class KeyboardDictationService: ObservableObject {
     var textDocumentProxy: UITextDocumentProxy?
     private var darwinObserver: DarwinNotificationObservation?
     private var recordingStartedObserver: DarwinNotificationObservation?
+    private var hostAppStateObserver: DarwinNotificationObservation?
+    private var pongObserver: DarwinNotificationObservation?
     private var lastCommandTimestamp: Date?
     private var commandTimeout: Double = 3.0  // 3 seconds timeout
 
@@ -48,11 +51,50 @@ class KeyboardDictationService: ObservableObject {
         // Set up Darwin notification observers
         setupDarwinNotificationObserver()
         setupRecordingStartedObserver()
+        setupHostAppStateObserver()
+        setupPongObserver()
+
+        // Check if host app is alive via ping-pong
+        checkHostAppAlive()
     }
 
     deinit {
         // Darwin notification observers are automatically cleaned up
         // when the DarwinNotificationObservation objects are deallocated
+    }
+
+    // MARK: - Ping-Pong (instant alive check)
+
+    private func setupPongObserver() {
+        pongObserver = DarwinNotificationCenter.shared.addObserver(name: AppConstants.pongNotification) { [weak self] in
+            Task { @MainActor in
+                self?.handlePongReceived()
+            }
+        }
+        logger.info("Darwin notification observer set up for pong")
+    }
+
+    private func handlePongReceived() {
+        logger.info("Received pong from host app - it's alive!")
+        isHostAppReady = true
+    }
+
+    /// Sends a ping to check if container app is alive
+    func checkHostAppAlive() {
+        // First check the stored state
+        let storedState = SharedState.isHostAppReady()
+
+        if storedState {
+            // State says ready, but verify with ping
+            // Assume not ready until we get pong
+            isHostAppReady = false
+            logger.info("Sending ping to verify host app is alive")
+            DarwinNotificationCenter.shared.post(name: AppConstants.pingNotification)
+            // If container is alive, it will respond with pong and handlePongReceived will set isHostAppReady = true
+        } else {
+            // State says not ready
+            isHostAppReady = false
+        }
     }
 
     private func setupDarwinNotificationObserver() {
@@ -71,6 +113,21 @@ class KeyboardDictationService: ObservableObject {
             }
         }
         logger.info("Darwin notification observer set up for recordingStarted")
+    }
+
+    private func setupHostAppStateObserver() {
+        hostAppStateObserver = DarwinNotificationCenter.shared.addObserver(name: AppConstants.hostAppStateChangedNotification) { [weak self] in
+            Task { @MainActor in
+                self?.handleHostAppStateChanged()
+            }
+        }
+        logger.info("Darwin notification observer set up for hostAppStateChanged")
+    }
+
+    private func handleHostAppStateChanged() {
+        let newState = SharedState.isHostAppReady()
+        logger.info("Host app state changed notification received - isReady: \(newState)")
+        isHostAppReady = newState
     }
 
     private func handleTextReadyNotification() {
@@ -125,18 +182,20 @@ class KeyboardDictationService: ObservableObject {
     }
 
     func toggleRecording() async {
-        logger.info("toggleRecording invoked — status: \(self.status.rawValue), hostAppReady: \(SharedState.isHostAppReady())")
+        logger.info("toggleRecording invoked — status: \(self.status.rawValue), hostAppReady: \(self.isHostAppReady)")
+
+        // Only allow recording when host app is ready (UI should show "Start App" button otherwise)
+        guard isHostAppReady else {
+            logger.warning("toggleRecording called but host app not ready - UI should show Start App button")
+            return
+        }
+
         switch status {
         case .idle:
-            if SharedState.isHostAppReady() {
-                // Host app is already initialized - show x/check buttons immediately and post start recording command
-                logger.info("Host app ready - showing recording controls and posting start recording command directly")
-                status = .recording  // Show x/check buttons immediately
-                DarwinNotificationCenter.shared.post(name: AppConstants.startRecordingNotification)
-            } else {
-                // Host app never opened - open it first
-                await triggerHost()
-            }
+            // Host app is ready - show x/check buttons immediately and post start recording command
+            logger.info("Host app ready - showing recording controls and posting start recording command")
+            status = .recording
+            DarwinNotificationCenter.shared.post(name: AppConstants.startRecordingNotification)
         case .recording, .processing:
             logger.debug("toggleRecording ignored for status: \(self.status.rawValue)")
         default:
@@ -192,6 +251,41 @@ class KeyboardDictationService: ObservableObject {
 
         // Status will be updated when Darwin notification is received
         // See handleTextReadyNotification() for auto-insert logic
+    }
+
+    // MARK: - Host App Control
+
+    /// Opens the container app via URL scheme for cold-start initialization
+    func openHostApp() {
+        logger.info("openHostApp invoked")
+        lastError = nil
+
+        // Check Full Access first
+        if !hasFullAccess {
+            logger.error("Full Access not enabled - cannot open URLs")
+            lastError = "Full Access Required - Enable in Settings > General > Keyboard > Keyboards > VoiceDictationKeyboard"
+            return
+        }
+
+        // Open host app via URL scheme
+        guard let url = appOpenURL else {
+            logger.error("Failed to create URL from 'voicedictation://start'")
+            lastError = "URL Scheme Error"
+            return
+        }
+
+        logger.info("Opening host app via URL scheme")
+
+        urlOpener?(url, { [weak self] success in
+            guard let self = self else { return }
+            Task { @MainActor in
+                if !success {
+                    self.logger.error("URL opening failed - app may not be installed or available")
+                    self.lastError = "Cannot open dictation app - check if installed"
+                }
+                // If success, user will manually return - isHostAppReady will update via Darwin notification
+            }
+        })
     }
 
     // MARK: - Recording Control Methods

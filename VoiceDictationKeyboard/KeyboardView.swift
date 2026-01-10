@@ -86,19 +86,40 @@ struct KeyboardView: View {
                         }
                     }
 
-                    // Mic button
-                    Button(action: {
-                        Task {
-                            await dictationService.toggleRecording()
+                    // Mic button or Start App button (based on host app readiness)
+                    if dictationService.isHostAppReady {
+                        // Host app is ready - show mic button
+                        Button(action: {
+                            Task {
+                                await dictationService.toggleRecording()
+                            }
+                        }) {
+                            Image(systemName: micIcon)
+                                .font(.system(size: 20))
+                                .foregroundColor(micColor)
+                                .frame(width: 44, height: 44)
+                                .background(claudeCream)
+                                .cornerRadius(12)
+                                .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 2)
                         }
-                    }) {
-                        Image(systemName: micIcon)
-                            .font(.system(size: 20))
-                            .foregroundColor(micColor)
-                            .frame(width: 44, height: 44)
-                            .background(claudeCream)
+                    } else {
+                        // Host app not ready - show Start App button
+                        Button(action: {
+                            dictationService.openHostApp()
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.up.forward.app")
+                                    .font(.system(size: 14, weight: .medium))
+                                Text("Start App")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .frame(height: 44)
+                            .background(claudeOrange)
                             .cornerRadius(12)
-                            .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 2)
+                            .shadow(color: claudeOrange.opacity(0.3), radius: 2, x: 0, y: 2)
+                        }
                     }
 
                     Spacer()
@@ -118,6 +139,10 @@ struct KeyboardView: View {
             }
         }
         .background(claudeCream)
+        .onAppear {
+            // Ping container app to verify it's actually alive
+            dictationService.checkHostAppAlive()
+        }
     }
 
     // Main keyboard view that switches between modes
@@ -604,22 +629,32 @@ struct KeyboardView: View {
     }
 
     private var statusText: String {
+        // Show different status when host app is not ready
+        if !dictationService.isHostAppReady {
+            return "Open app to enable voice"
+        }
+
         switch dictationService.status {
-        case .idle: "Ready"
-        case .recording: "Recording..."
-        case .processing: "Processing..."
-        case .ready: "Tap Paste"
-        case .error: "Error"
+        case .idle: return "Ready"
+        case .recording: return "Recording..."
+        case .processing: return "Processing..."
+        case .ready: return "Tap Paste"
+        case .error: return "Error"
         }
     }
 
     private var statusColor: Color {
+        // Show orange when host app is not ready (matches Start App button)
+        if !dictationService.isHostAppReady {
+            return claudeOrange
+        }
+
         switch dictationService.status {
-        case .idle: .gray
-        case .recording: .red
-        case .processing: .orange
-        case .ready: .green
-        case .error: .red
+        case .idle: return .gray
+        case .recording: return .red
+        case .processing: return .orange
+        case .ready: return .green
+        case .error: return .red
         }
     }
 

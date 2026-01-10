@@ -18,6 +18,10 @@ enum AppConstants {
 
     // Darwin notification for state changes
     static let hostAppStateChangedNotification = "group.sozodennis.voicedictation.stateChanged"
+
+    // Ping-pong for instant alive check
+    static let pingNotification = "group.sozodennis.voicedictation.ping"
+    static let pongNotification = "group.sozodennis.voicedictation.pong"
 }
 
 // MARK: - Shared State Helper (WisprFlow Pattern)
