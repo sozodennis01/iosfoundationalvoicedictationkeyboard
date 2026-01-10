@@ -2,9 +2,11 @@ import Foundation
 import Speech
 import AVFoundation
 import Combine
+import os
 
 @available(iOS 26.0, *)
 class SpeechRecognitionService: ObservableObject {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "localspeechtotext_keyboard", category: "SpeechRecognitionService")
     private var audioEngine: AVAudioEngine?
     private var audioFile: AVAudioFile?
     private var recordingURL: URL?
@@ -15,15 +17,46 @@ class SpeechRecognitionService: ObservableObject {
 
     init() {
         checkPermissions()
-        setupAudioEngine()
+        // Note: Don't setup audio engine here - we'll do it in initializeAudioSession()
     }
 
     // MARK: - Audio Engine Management
 
-    private func setupAudioEngine() {
-        guard audioEngine == nil else { return }
-        audioEngine = AVAudioEngine()
-        // Note: Don't prepare the engine here - prepare only when starting recording
+    /// Initializes the audio session and starts the audio engine (no tap installed)
+    func initializeAudioSession() async throws {
+        // If already running, nothing to do
+        if let engine = audioEngine, engine.isRunning {
+            return
+        }
+
+        let audioSession = AVAudioSession.sharedInstance()
+        try audioSession.setCategory(
+            .playAndRecord,
+            mode: .measurement,
+            options: [.allowBluetoothHFP, .mixWithOthers]
+        )
+        try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+
+        // Create and start engine without any tap
+        let engine = AVAudioEngine()
+        let inputNode = engine.inputNode
+        let format = inputNode.outputFormat(forBus: 0)
+
+        guard format.channelCount > 0 else {
+            logger.error("AudioSession init failed: input format has 0 channels")
+            throw SpeechRecognitionError.audioEngineError
+        }
+
+        engine.prepare()
+        do {
+            try engine.start()
+            logger.debug("AudioSession initialized and engine started (warm, no tap)")
+        } catch {
+            logger.error("AudioSession init failed to start engine: \(error.localizedDescription, privacy: .public)")
+            throw SpeechRecognitionError.audioEngineError
+        }
+
+        audioEngine = engine
     }
 
     // MARK: - Permission Management
@@ -54,57 +87,58 @@ class SpeechRecognitionService: ObservableObject {
 
     func startRecording() async throws {
         guard hasPermission else {
+            logger.error("startRecording aborted: permissionDenied")
             throw SpeechRecognitionError.permissionDenied
         }
 
-        // Configure audio session for background recording with mixing
-        let audioSession = AVAudioSession.sharedInstance()
-        try audioSession.setCategory(
-            .playAndRecord,
-            mode: .measurement,
-            options: [.defaultToSpeaker, .allowBluetoothHFP, .mixWithOthers]
-        )
-        try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-
-        // Create temporary file for audio recording
-        let tempDir = FileManager.default.temporaryDirectory
-        recordingURL = tempDir.appendingPathComponent("recording_temp_\(UUID().uuidString).caf")
-
-        // Set up audio engine (don't prepare yet)
-        if audioEngine == nil {
-            audioEngine = AVAudioEngine()
-        }
-        guard let audioEngine = audioEngine else {
+        // Ensure session + engine are ready
+        try await initializeAudioSession()
+        guard let engine = audioEngine else {
             throw SpeechRecognitionError.audioEngineError
         }
 
-        let inputNode = audioEngine.inputNode
+        let inputNode = engine.inputNode
         let recordingFormat = inputNode.outputFormat(forBus: 0)
+
+        guard recordingFormat.channelCount > 0 else {
+            throw SpeechRecognitionError.audioEngineError
+        }
+
+        // If engine was stopped (e.g., after prior stop), restart before tapping
+        if !engine.isRunning {
+            do {
+                try engine.start()
+                logger.debug("Engine was stopped; restarted before installing tap")
+            } catch {
+                logger.error("Engine restart failed before tap: \(error.localizedDescription, privacy: .public)")
+                throw SpeechRecognitionError.audioEngineError
+            }
+        }
+
+        // Create temporary file for audio recording
+        let tempDir = FileManager.default.temporaryDirectory
+        let tempURL = tempDir.appendingPathComponent("recording_temp_\(UUID().uuidString).caf")
+        recordingURL = tempURL
+
+        audioFile = try AVAudioFile(
+            forWriting: tempURL,
+            settings: recordingFormat.settings,
+            commonFormat: recordingFormat.commonFormat,
+            interleaved: false
+        )
+        logger.debug("Recording file created at \(tempURL.path, privacy: .public)")
+
+        // Install tap (engine may already be running)
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
+            guard let self = self else { return }
+            self.writeAudioBufferToFile(buffer)
+        }
+        logger.debug("Tap installed on inputNode; recording started")
 
         await MainActor.run {
             isRecording = true
             currentTranscript = ""
         }
-
-        // Create audio file for writing
-        audioFile = try AVAudioFile(
-            forWriting: recordingURL!,
-            settings: recordingFormat.settings,
-            commonFormat: recordingFormat.commonFormat,
-            interleaved: false
-        )
-
-        // Install tap to write audio to file (not to analyzer)
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, time in
-            guard let self = self else { return }
-            self.writeAudioBufferToFile(buffer)
-        }
-
-        // Prepare the engine after installing the tap
-        audioEngine.prepare()
-
-        // Start audio engine
-        try audioEngine.start()
     }
 
     private func writeAudioBufferToFile(_ buffer: AVAudioPCMBuffer) {
@@ -122,11 +156,19 @@ class SpeechRecognitionService: ObservableObject {
             throw SpeechRecognitionError.recognitionFailed
         }
 
-        // Stop audio engine and close file
-        audioEngine?.inputNode.removeTap(onBus: 0)
+        // Tear down tap and close the file
+        if let engine = audioEngine {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+            do {
+                try engine.start() // keep engine warm after stop
+                logger.debug("Engine restarted warm after stop")
+            } catch {
+                logger.error("Engine restart failed after stop: \(error.localizedDescription, privacy: .public)")
+                audioEngine = nil
+            }
+        }
         try? audioFile?.close()
-        audioEngine?.stop()
-        audioEngine?.prepare() // Keep prepared for next recording
 
         guard FileManager.default.fileExists(atPath: recordingURL.path) else {
             throw SpeechRecognitionError.recognitionFailed
@@ -135,37 +177,32 @@ class SpeechRecognitionService: ObservableObject {
         let transcriber = SpeechTranscriber(
             locale: Locale.current,
             transcriptionOptions: [],
-            reportingOptions: [], // No volatile results needed for file transcription
+            reportingOptions: [],
             attributeOptions: []
         )
-
         let analyzer = SpeechAnalyzer(modules: [transcriber])
 
         await MainActor.run {
             isRecording = false
         }
 
-        // Transcribe the recorded file
         var transcriptParts: [String] = []
 
         do {
-            // Create AVAudioFile from the recorded URL for analysis
             let audioFile = try AVAudioFile(forReading: recordingURL)
-            // Use the file-based transcription pattern from the quickstart guide
             if let lastSample = try await analyzer.analyzeSequence(from: audioFile) {
                 try await analyzer.finalizeAndFinish(through: lastSample)
             } else {
                 await analyzer.cancelAndFinishNow()
             }
 
-            // Collect all transcription results
             for try await result in transcriber.results {
                 let text = String(result.text.characters)
                 transcriptParts.append(text)
             }
         } catch {
-            // If file analysis fails, try canceling properly
             await analyzer.cancelAndFinishNow()
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             throw SpeechRecognitionError.recognitionFailed
         }
 
@@ -177,8 +214,8 @@ class SpeechRecognitionService: ObservableObject {
             currentTranscript = finalTranscript
         }
 
-        // Deactivate audio session
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        audioFile = nil
+        self.recordingURL = nil
 
         return finalTranscript
     }
@@ -186,11 +223,20 @@ class SpeechRecognitionService: ObservableObject {
     // MARK: - Cancel recording without transcription
 
     func cancelRecording() {
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine?.prepare()
+        if let engine = audioEngine {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+            do {
+                try engine.start() // keep warm
+                logger.debug("Engine restarted warm after cancel")
+            } catch {
+                logger.error("Engine restart failed after cancel: \(error.localizedDescription, privacy: .public)")
+                audioEngine = nil
+            }
+        }
 
-        // Clean up temporary file if it exists
+        try? audioFile?.close()
+
         if let recordingURL = recordingURL {
             try? FileManager.default.removeItem(at: recordingURL)
         }
@@ -199,11 +245,7 @@ class SpeechRecognitionService: ObservableObject {
         recordingURL = nil
         isRecording = false
         currentTranscript = ""
-
-        // Deactivate audio session
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
-}
 
 // MARK: - Errors
 
@@ -222,4 +264,5 @@ enum SpeechRecognitionError: LocalizedError {
             return "Audio engine encountered an error"
         }
     }
+}
 }

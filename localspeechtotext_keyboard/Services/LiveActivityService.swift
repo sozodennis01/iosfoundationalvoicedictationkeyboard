@@ -7,14 +7,30 @@
 
 import ActivityKit
 import Foundation
+import UIKit
+import os
 
 @available(iOS 26.0, *)
 class LiveActivityService {
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "localspeechtotext_keyboard", category: "LiveActivityService")
     private var currentActivity: Activity<RecordingActivityAttributes>?
     private var startTime: Date?
     
     /// Start a new Live Activity for voice recording
     func startActivity() async throws {
+        // Live Activities cannot be started from background; skip quietly if not allowed/foreground
+        let authInfo = ActivityAuthorizationInfo()
+        guard authInfo.areActivitiesEnabled else {
+            logger.debug("Live Activity start skipped: activities disabled")
+            return
+        }
+
+        let isForeground = await MainActor.run { UIApplication.shared.applicationState == .active }
+        guard isForeground else {
+            logger.debug("Live Activity start skipped: app not foreground")
+            return
+        }
+
         // End any existing activity first
         await endActivity()
         
@@ -33,6 +49,7 @@ class LiveActivityService {
         currentActivity = activity
         startTime = Date()
         
+        logger.debug("Live Activity started")
         // Start timer to update duration
         startDurationTimer()
     }

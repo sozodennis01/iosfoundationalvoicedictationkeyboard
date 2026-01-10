@@ -66,6 +66,93 @@ iOS keyboard extensions **cannot access the microphone directly**. However, once
 
 **This is the KeyboardKit `.keyboard` pattern**: Initialize once, then keyboard controls background recording.
 
+---
+
+## 🔧 WisprFlow Testing: Audio Session Issue & Solution
+
+### Testing Observation
+When testing WisprFlow pattern:
+- ✅ Orange dot appears (audio session active)
+- ❌ But audio is NOT actually being recorded
+
+**Indicator note**: The orange mic privacy dot appears only after `audioEngine.start()` successfully runs. Session activation alone does not trigger it.
+
+**Runtime crash cause**: Starting `AVAudioEngine` during warmup with no active IO route (input/output node missing, e.g., background or by-host restricted) triggers `AVAudioEngineGraph` assertions and crashes on `engine.start()`.
+
+**Current approach**: We now start the audio session **and** `AVAudioEngine` at app launch, but with **no tap installed** and **no file opened**. Before starting, we guard for `inputNode` format `channelCount > 0`; if `engine.start()` fails we surface `audioEngineError`. This aligns with Apple’s standard warm engine pattern: session active, engine running, no tap until recording begins.
+
+**Root Cause**: Audio session becomes "cold" when activated reactively from background. System takes time to route audio properly.
+
+### ✅ Solution: Decouple Audio Session from Recording
+
+**OLD PATTERN (Doesn't Work):**
+```
+App Launch                   │  Darwin Notification to Record
+─────────────────────────────┼──────────────────────────────
+Do nothing (audio session off)│  1. Create AVAudioSession
+                              │  2. setActive(true)
+                              │  3. Create AVAudioEngine
+                              │  4. Install tap
+                              │  5. Start engine
+❌ Audio may not route correctly│  ⚠️ COLD session = no audio captured
+```
+
+**NEW PATTERN (Works):**
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                     DECOUPLED AUDIO SESSION PATTERN                         │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                            │
+│   APP LAUNCH                     │  DARWIN NOTIFICATION                    │
+│   ───────────                    │  ───────────────────                    │
+│   1. Configure AVAudioSession    │  1. Create temp file                    │
+│      - .playAndRecord            │  2. Install audio in inputNode tap      │
+│      - mixWithOthers             │  3. Write audio buffers to file         │
+│   2. setActive(true)             │                                         │
+│   3. Create AVAudioEngine        │  STOP NOTIFICATION                      │
+│   4. audioEngine.prepare()       │  ─────────────────                      │
+│   5. audioEngine.start()         │  1. Remove tap                          │
+│      (but NO tap installed!)     │  2. Close file                          │
+│                                  │  3. Transcribe file                     │
+│   Session stays alive in bg      │  4. LLM cleanup                         │
+│   via UIBackgroundModes: audio   │  5. Post textReady notification         │
+│                                  │  6. Reset dictationService.status → idle│
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key Implementation in SpeechRecognitionService:**
+```swift
+// Called once at app launch (.onAppear)
+func initializeAudioSession() async throws {
+    // Create "warm" session - always active for immediate capture
+    let session = AVAudioSession.sharedInstance()
+    try session.setCategory(.playAndRecord, mode: .measurement,
+                            options: [.defaultToSpeaker, .mixWithOthers])
+    try session.setActive(true)
+
+    audioEngine = AVAudioEngine()
+    audioEngine.prepare()
+    try audioEngine.start()
+}
+
+// Called only when recording starts (Darwin notification)
+func startRecording() async throws {
+    // Session already active! Just install tap for capture
+    let inputNode = audioEngine.inputNode
+    inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, time in
+        self?.writeAudioBufferToFile(buffer)
+    }
+}
+```
+
+**Status Flow After Paste:**
+```
+idle → recording → processing → ready (auto-paste) → idle
+                                          ^
+          dictationService.status resets here after paste completes
+```
+
 ## Key Files Reference
 
 | File | Purpose |

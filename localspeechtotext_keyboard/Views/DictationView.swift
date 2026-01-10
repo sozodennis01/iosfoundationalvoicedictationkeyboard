@@ -22,11 +22,11 @@ struct DictationView: View {
 
     var body: some View {
         VStack(spacing: 30) {
-            // Status indicator
-            statusView
-
             // Microphone button
             microphoneButton
+            
+            // Status indicator
+            statusView
 
             // Transcript display
             transcriptView
@@ -60,6 +60,16 @@ struct DictationView: View {
 
             // Mark host app as ready for keyboard extensions (WisprFlow pattern)
             SharedState.setHostAppReady(true)
+
+            // Initialize audio session for immediate recording (keeps it "warm")
+            Task {
+                do {
+                    try await speechService.initializeAudioSession()
+                    print("Audio session initialized successfully")
+                } catch {
+                    print("Failed to initialize audio session: \(error.localizedDescription)")
+                }
+            }
         }
     }
 

@@ -74,6 +74,7 @@ class TextCleanupService: ObservableObject {
         }
 
         do {
+            //TODO add safety here where if the model is processing something, wait for it?
             let response = try await session.respond(to: prompt)
             return extractCleanedText(from: response.content)
         } catch {
@@ -85,14 +86,20 @@ class TextCleanupService: ObservableObject {
 
     func createCleanupPrompt(rawText: String) -> String {
         return """
-        You are a text cleanup assistant. Your task is to clean up the following voice-to-text transcript.
+        You are a text cleanup assistant. Your task is to transform a voice-to-text transcript into clear, well-formatted written text while preserving the speaker’s original meaning.
 
         Instructions:
-        - Fix punctuation and capitalization
-        - Remove filler words (um, uh, like, you know, etc.)
-        - Remove false starts and repetitions
-        - Preserve the original meaning exactly
-        - Output ONLY the cleaned text, no explanations or formatting
+            •    Fix punctuation, capitalization, and obvious transcription errors
+            •    Remove filler words (um, uh, like, you know, etc.)
+            •    Remove false starts, repetitions, and stutters
+            •    Keep the meaning, tone, and intent the same (do not add new info)
+            •    Preserve important details (names, numbers, dates, commitments)
+            •    If the speaker is clearly drafting a specific format, output in that format:
+            •    Email (with subject + greeting + paragraphs + sign-off)
+            •    Bullets/checklists for lists
+            •    Headings for sections
+            •    Short paragraphs for narrative
+            •    Do not include any commentary, labels, or extra text
 
         Raw transcript:
         \(rawText)
