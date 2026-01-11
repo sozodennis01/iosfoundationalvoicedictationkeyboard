@@ -24,10 +24,37 @@ struct KeyboardView: View {
     @State private var isPulsing = false
     @State private var waveformPhase: Double = 0
 
-    // Claude color theme
-    private let claudeOrange = Color(red: 218/255, green: 119/255, blue: 86/255)  // #DA7756
-    private let claudeCream = Color(red: 250/255, green: 249/255, blue: 246/255)  // #FAF9F6
-    private let claudeTan = Color(red: 232/255, green: 221/255, blue: 212/255)    // #E8DDD4
+    // Dark mode detection
+    @Environment(\.colorScheme) var colorScheme
+
+    // Claude color theme - adaptive for dark mode
+    private var claudeOrange: Color {
+        colorScheme == .dark
+            ? Color(red: 217/255, green: 121/255, blue: 90/255)   // #D9795A - warmer in dark
+            : Color(red: 218/255, green: 119/255, blue: 86/255)   // #DA7756
+    }
+
+    private var claudeCream: Color {
+        colorScheme == .dark
+            ? Color(red: 44/255, green: 42/255, blue: 40/255)     // #2C2A28 - warm charcoal
+            : Color(red: 250/255, green: 249/255, blue: 246/255)  // #FAF9F6
+    }
+
+    private var claudeTan: Color {
+        colorScheme == .dark
+            ? Color(red: 62/255, green: 58/255, blue: 54/255)     // #3E3A36 - elevated surface
+            : Color(red: 232/255, green: 221/255, blue: 212/255)  // #E8DDD4
+    }
+
+    private var keyBackground: Color {
+        colorScheme == .dark
+            ? Color(red: 72/255, green: 68/255, blue: 64/255)     // #484440 - key surface
+            : claudeCream
+    }
+
+    private var keyShadowOpacity: Double {
+        colorScheme == .dark ? 0.25 : 0.08
+    }
 
     enum KeyboardMode {
         case letters
@@ -98,9 +125,9 @@ struct KeyboardView: View {
                                 .font(.system(size: 20))
                                 .foregroundColor(micColor)
                                 .frame(width: 44, height: 44)
-                                .background(claudeCream)
+                                .background(keyBackground)
                                 .cornerRadius(12)
-                                .shadow(color: Color.black.opacity(0.1), radius: 2, x: 0, y: 2)
+                                .shadow(color: Color.black.opacity(keyShadowOpacity), radius: 2, x: 0, y: 2)
                         }
                     } else {
                         // Host app not ready - show Start App button
@@ -162,6 +189,17 @@ struct KeyboardView: View {
 
             // Bottom control row (iOS standard layout)
             HStack(spacing: 4) {
+                // Globe key (keyboard switcher) - leftmost position
+                Button(action: switchKeyboard) {
+                    Image(systemName: "globe")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color.primary)
+                        .frame(width: 45, height: 38)
+                        .background(claudeTan)
+                        .cornerRadius(8)
+                        .shadow(color: Color.black.opacity(keyShadowOpacity), radius: 1, x: 0, y: 1)
+                }
+
                 // Mode switch key
                 Button(action: cycleKeyboardMode) {
                     Text(modeButtonText)
@@ -170,29 +208,7 @@ struct KeyboardView: View {
                         .frame(width: 45, height: 38)
                         .background(claudeTan)
                         .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.08), radius: 1, x: 0, y: 1)
-                }
-
-                // Globe key (keyboard switcher)
-                Button(action: switchKeyboard) {
-                    Image(systemName: "globe")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color.primary)
-                        .frame(width: 45, height: 38)
-                        .background(claudeTan)
-                        .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.08), radius: 1, x: 0, y: 1)
-                }
-
-                // Emoji key
-                Button(action: openEmojiKeyboard) {
-                    Image(systemName: "face.smiling")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color.primary)
-                        .frame(width: 45, height: 38)
-                        .background(claudeTan)
-                        .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.08), radius: 1, x: 0, y: 1)
+                        .shadow(color: Color.black.opacity(keyShadowOpacity), radius: 1, x: 0, y: 1)
                 }
 
                 // Space bar
@@ -201,17 +217,17 @@ struct KeyboardView: View {
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(Color.primary)
                         .frame(maxWidth: .infinity, minHeight: 38)
-                        .background(claudeCream)
+                        .background(keyBackground)
                         .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.08), radius: 1, x: 0, y: 1)
+                        .shadow(color: Color.black.opacity(keyShadowOpacity), radius: 1, x: 0, y: 1)
                 }
 
                 // Period key
                 KeyButton(
                     key: ".",
                     keyType: .letter,
-                    claudeOrange: claudeOrange,
-                    claudeCream: claudeCream,
+                    keyBackground: keyBackground,
+                    keyShadowOpacity: keyShadowOpacity,
                     action: { insertKey($0) },
                     fixedWidth: 45
                 )
@@ -224,7 +240,7 @@ struct KeyboardView: View {
                         .frame(width: 55, height: 38)
                         .background(claudeOrange)
                         .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.15), radius: 2, x: 0, y: 2)
+                        .shadow(color: Color.black.opacity(keyShadowOpacity * 2), radius: 2, x: 0, y: 2)
                 }
             }
             .padding(.horizontal, 6)
@@ -242,8 +258,8 @@ struct KeyboardView: View {
                         key: key,
                         isUppercase: isUppercase,
                         keyType: .letter,
-                        claudeOrange: claudeOrange,
-                        claudeCream: claudeCream,
+                        keyBackground: keyBackground,
+                        keyShadowOpacity: keyShadowOpacity,
                         action: { insertKey($0) }
                     )
                 }
@@ -256,8 +272,8 @@ struct KeyboardView: View {
                         key: key,
                         isUppercase: isUppercase,
                         keyType: .letter,
-                        claudeOrange: claudeOrange,
-                        claudeCream: claudeCream,
+                        keyBackground: keyBackground,
+                        keyShadowOpacity: keyShadowOpacity,
                         action: { insertKey($0) }
                     )
                 }
@@ -273,7 +289,7 @@ struct KeyboardView: View {
                         .frame(width: 45, height: 38)
                         .background(isUppercase ? claudeOrange : claudeTan)
                         .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.08), radius: 1, x: 0, y: 1)
+                        .shadow(color: Color.black.opacity(keyShadowOpacity), radius: 1, x: 0, y: 1)
                 }
 
                 ForEach(bottomRow, id: \.self) { key in
@@ -281,8 +297,8 @@ struct KeyboardView: View {
                         key: key,
                         isUppercase: isUppercase,
                         keyType: .letter,
-                        claudeOrange: claudeOrange,
-                        claudeCream: claudeCream,
+                        keyBackground: keyBackground,
+                        keyShadowOpacity: keyShadowOpacity,
                         action: { insertKey($0) }
                     )
                 }
@@ -295,7 +311,7 @@ struct KeyboardView: View {
                         .frame(width: 45, height: 38)
                         .background(claudeTan)
                         .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.08), radius: 1, x: 0, y: 1)
+                        .shadow(color: Color.black.opacity(keyShadowOpacity), radius: 1, x: 0, y: 1)
                 }
             }
         }
@@ -310,8 +326,8 @@ struct KeyboardView: View {
                     KeyButton(
                         key: key,
                         keyType: .letter,
-                        claudeOrange: claudeOrange,
-                        claudeCream: claudeCream,
+                        keyBackground: keyBackground,
+                        keyShadowOpacity: keyShadowOpacity,
                         action: { insertKey($0) }
                     )
                 }
@@ -323,8 +339,8 @@ struct KeyboardView: View {
                     KeyButton(
                         key: key,
                         keyType: .letter,
-                        claudeOrange: claudeOrange,
-                        claudeCream: claudeCream,
+                        keyBackground: keyBackground,
+                        keyShadowOpacity: keyShadowOpacity,
                         action: { insertKey($0) }
                     )
                 }
@@ -340,15 +356,15 @@ struct KeyboardView: View {
                         .frame(width: 45, height: 38)
                         .background(claudeTan)
                         .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.08), radius: 1, x: 0, y: 1)
+                        .shadow(color: Color.black.opacity(keyShadowOpacity), radius: 1, x: 0, y: 1)
                 }
 
                 ForEach(numbersBottomRow, id: \.self) { key in
                     KeyButton(
                         key: key,
                         keyType: .letter,
-                        claudeOrange: claudeOrange,
-                        claudeCream: claudeCream,
+                        keyBackground: keyBackground,
+                        keyShadowOpacity: keyShadowOpacity,
                         action: { insertKey($0) }
                     )
                 }
@@ -361,7 +377,7 @@ struct KeyboardView: View {
                         .frame(width: 45, height: 38)
                         .background(claudeTan)
                         .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.08), radius: 1, x: 0, y: 1)
+                        .shadow(color: Color.black.opacity(keyShadowOpacity), radius: 1, x: 0, y: 1)
                 }
             }
         }
@@ -376,8 +392,8 @@ struct KeyboardView: View {
                     KeyButton(
                         key: key,
                         keyType: .letter,
-                        claudeOrange: claudeOrange,
-                        claudeCream: claudeCream,
+                        keyBackground: keyBackground,
+                        keyShadowOpacity: keyShadowOpacity,
                         action: { insertKey($0) }
                     )
                 }
@@ -389,8 +405,8 @@ struct KeyboardView: View {
                     KeyButton(
                         key: key,
                         keyType: .letter,
-                        claudeOrange: claudeOrange,
-                        claudeCream: claudeCream,
+                        keyBackground: keyBackground,
+                        keyShadowOpacity: keyShadowOpacity,
                         action: { insertKey($0) }
                     )
                 }
@@ -406,15 +422,15 @@ struct KeyboardView: View {
                         .frame(width: 45, height: 38)
                         .background(claudeTan)
                         .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.08), radius: 1, x: 0, y: 1)
+                        .shadow(color: Color.black.opacity(keyShadowOpacity), radius: 1, x: 0, y: 1)
                 }
 
                 ForEach(symbolsBottomRow, id: \.self) { key in
                     KeyButton(
                         key: key,
                         keyType: .letter,
-                        claudeOrange: claudeOrange,
-                        claudeCream: claudeCream,
+                        keyBackground: keyBackground,
+                        keyShadowOpacity: keyShadowOpacity,
                         action: { insertKey($0) }
                     )
                 }
@@ -427,7 +443,7 @@ struct KeyboardView: View {
                         .frame(width: 45, height: 38)
                         .background(claudeTan)
                         .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.08), radius: 1, x: 0, y: 1)
+                        .shadow(color: Color.black.opacity(keyShadowOpacity), radius: 1, x: 0, y: 1)
                 }
             }
         }
@@ -605,12 +621,6 @@ struct KeyboardView: View {
         keyboardSwitcher?()
     }
 
-    private func openEmojiKeyboard() {
-        // iOS doesn't provide a public API to switch directly to emoji keyboard.
-        // Use the keyboard switcher to cycle to the next keyboard (which may include emoji).
-        keyboardSwitcher?()
-    }
-
     private func insertKey(_ key: String) {
         let textToInsert = isUppercase ? key.uppercased() : key.lowercased()
         textDocumentProxy.insertText(textToInsert)
@@ -678,8 +688,8 @@ struct KeyboardView: View {
         let key: String
         var isUppercase: Bool = false
         let keyType: KeyType
-        let claudeOrange: Color
-        let claudeCream: Color
+        let keyBackground: Color
+        let keyShadowOpacity: Double
         let action: (String) -> Void
         var fixedWidth: CGFloat? = nil
 
@@ -699,9 +709,9 @@ struct KeyboardView: View {
                     .font(.system(size: 16, weight: .medium))
                     .foregroundColor(.primary)
                     .frame(width: fixedWidth ?? 34, height: 38)
-                    .background(claudeCream)
+                    .background(keyBackground)
                     .cornerRadius(keyType == .letter ? 6 : 8)
-                    .shadow(color: Color.black.opacity(0.08), radius: 1, x: 0, y: 1)
+                    .shadow(color: Color.black.opacity(keyShadowOpacity), radius: 1, x: 0, y: 1)
                     .scaleEffect(0.95) // Slightly smaller for material design feel
             }
         }
